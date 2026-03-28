@@ -3,6 +3,7 @@ PawPal+ Pet Care Management System
 Logic layer containing all backend classes: Task, Pet, Owner, Scheduler.
 """
 
+import json
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Optional
@@ -51,6 +52,33 @@ class Task:
             pet_name=self.pet_name,
         )
 
+    def to_dict(self) -> dict:
+        """Convert task to a JSON-serializable dictionary."""
+        return {
+            "description": self.description,
+            "time": self.time,
+            "duration_minutes": self.duration_minutes,
+            "priority": self.priority,
+            "frequency": self.frequency,
+            "completed": self.completed,
+            "due_date": self.due_date.isoformat(),
+            "pet_name": self.pet_name,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Task":
+        """Create a Task from a dictionary (loaded from JSON)."""
+        return cls(
+            description=data["description"],
+            time=data["time"],
+            duration_minutes=data["duration_minutes"],
+            priority=data.get("priority", "medium"),
+            frequency=data.get("frequency", "once"),
+            completed=data.get("completed", False),
+            due_date=date.fromisoformat(data["due_date"]),
+            pet_name=data.get("pet_name", ""),
+        )
+
     def __str__(self) -> str:
         status = "Done" if self.completed else "Pending"
         return (
@@ -84,6 +112,24 @@ class Pet:
     def get_pending_tasks(self) -> list[Task]:
         """Return all tasks that are not yet completed."""
         return [t for t in self.tasks if not t.completed]
+
+    def to_dict(self) -> dict:
+        """Convert pet to a JSON-serializable dictionary."""
+        return {
+            "name": self.name,
+            "species": self.species,
+            "tasks": [t.to_dict() for t in self.tasks],
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Pet":
+        """Create a Pet from a dictionary (loaded from JSON)."""
+        pet = cls(name=data["name"], species=data["species"])
+        for task_data in data.get("tasks", []):
+            task = Task.from_dict(task_data)
+            task.pet_name = pet.name
+            pet.tasks.append(task)
+        return pet
 
     def __str__(self) -> str:
         return f"{self.name} ({self.species}) - {len(self.tasks)} task(s)"
@@ -121,6 +167,33 @@ class Owner:
             if pet.name == name:
                 return pet
         return None
+
+    def to_dict(self) -> dict:
+        """Convert owner to a JSON-serializable dictionary."""
+        return {
+            "name": self.name,
+            "pets": [p.to_dict() for p in self.pets],
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Owner":
+        """Create an Owner from a dictionary (loaded from JSON)."""
+        owner = cls(name=data["name"])
+        for pet_data in data.get("pets", []):
+            owner.pets.append(Pet.from_dict(pet_data))
+        return owner
+
+    def save_to_json(self, filepath: str = "data.json") -> None:
+        """Save the owner, pets, and tasks to a JSON file."""
+        with open(filepath, "w") as f:
+            json.dump(self.to_dict(), f, indent=2)
+
+    @classmethod
+    def load_from_json(cls, filepath: str = "data.json") -> "Owner":
+        """Load an Owner (with pets and tasks) from a JSON file."""
+        with open(filepath, "r") as f:
+            data = json.load(f)
+        return cls.from_dict(data)
 
     def __str__(self) -> str:
         pet_names = ", ".join(p.name for p in self.pets) if self.pets else "No pets"
@@ -183,6 +256,52 @@ class Scheduler:
                 )
 
         return warnings
+
+    def find_next_available_slot(
+        self, duration_minutes: int, start_time: str = "07:00", end_time: str = "21:00"
+    ) -> Optional[str]:
+        """Find the next available time slot that fits a task of the given duration.
+
+        Scans from start_time to end_time in 30-minute increments and returns
+        the first slot where no existing pending task overlaps. Returns None if
+        no slot is available.
+
+        This algorithm converts HH:MM strings to minutes-since-midnight for
+        easy arithmetic, then checks each candidate slot against all occupied
+        time ranges (task.time to task.time + task.duration_minutes).
+        """
+        def to_minutes(hhmm: str) -> int:
+            h, m = hhmm.split(":")
+            return int(h) * 60 + int(m)
+
+        def to_hhmm(minutes: int) -> str:
+            return f"{minutes // 60:02d}:{minutes % 60:02d}"
+
+        # Build list of occupied ranges from pending tasks
+        occupied: list[tuple[int, int]] = []
+        for task in self.get_all_tasks():
+            if task.completed:
+                continue
+            start = to_minutes(task.time)
+            occupied.append((start, start + task.duration_minutes))
+
+        # Scan in 30-minute increments
+        candidate = to_minutes(start_time)
+        latest = to_minutes(end_time)
+
+        while candidate + duration_minutes <= latest:
+            candidate_end = candidate + duration_minutes
+            conflict = False
+            for occ_start, occ_end in occupied:
+                # Check for overlap: two ranges overlap if one starts before the other ends
+                if candidate < occ_end and candidate_end > occ_start:
+                    conflict = True
+                    break
+            if not conflict:
+                return to_hhmm(candidate)
+            candidate += 30
+
+        return None
 
     def mark_task_complete(self, task: Task) -> Optional[Task]:
         """Mark a task complete. If recurring, create and return the next occurrence."""

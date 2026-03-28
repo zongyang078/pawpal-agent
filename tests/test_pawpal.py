@@ -1,8 +1,11 @@
 """
 Automated test suite for PawPal+ system.
-Covers: task completion, task addition, sorting, recurring logic, and conflict detection.
+Covers: task completion, task addition, sorting, recurring logic, conflict detection,
+        JSON persistence, and next-available-slot finding.
 """
 
+import os
+import json
 from datetime import date, timedelta
 from pawpal_system import Task, Pet, Owner, Scheduler
 
@@ -62,6 +65,30 @@ class TestTask:
         task = Task(description="Vet visit", time="11:00", duration_minutes=60, frequency="once")
         assert task.create_next_occurrence() is None
 
+    def test_task_to_dict_and_from_dict(self):
+        """Task should round-trip through dict serialization."""
+        today = date.today()
+        task = Task(
+            description="Walk",
+            time="07:30",
+            duration_minutes=30,
+            priority="high",
+            frequency="daily",
+            completed=False,
+            due_date=today,
+            pet_name="Mochi",
+        )
+        data = task.to_dict()
+        restored = Task.from_dict(data)
+        assert restored.description == task.description
+        assert restored.time == task.time
+        assert restored.duration_minutes == task.duration_minutes
+        assert restored.priority == task.priority
+        assert restored.frequency == task.frequency
+        assert restored.completed == task.completed
+        assert restored.due_date == task.due_date
+        assert restored.pet_name == task.pet_name
+
 
 # --- Pet tests ---
 
@@ -103,6 +130,18 @@ class TestPet:
         assert len(pending) == 1
         assert pending[0].description == "Walk"
 
+    def test_pet_to_dict_and_from_dict(self):
+        """Pet should round-trip through dict serialization."""
+        pet = Pet(name="Mochi", species="dog")
+        pet.add_task(Task(description="Walk", time="09:00", duration_minutes=30))
+        pet.add_task(Task(description="Feed", time="08:00", duration_minutes=10))
+        data = pet.to_dict()
+        restored = Pet.from_dict(data)
+        assert restored.name == "Mochi"
+        assert restored.species == "dog"
+        assert len(restored.tasks) == 2
+        assert restored.tasks[0].pet_name == "Mochi"
+
 
 # --- Owner tests ---
 
@@ -125,6 +164,51 @@ class TestOwner:
         owner.add_pet(dog)
         owner.add_pet(cat)
         assert len(owner.get_all_tasks()) == 2
+
+    def test_save_and_load_json(self, tmp_path):
+        """Owner should round-trip through JSON file save/load."""
+        filepath = str(tmp_path / "test_data.json")
+        owner = Owner(name="Jordan")
+        dog = Pet(name="Mochi", species="dog")
+        dog.add_task(Task(
+            description="Walk",
+            time="07:30",
+            duration_minutes=30,
+            priority="high",
+            frequency="daily",
+        ))
+        cat = Pet(name="Luna", species="cat")
+        cat.add_task(Task(description="Play", time="14:00", duration_minutes=20))
+        owner.add_pet(dog)
+        owner.add_pet(cat)
+
+        # Save
+        owner.save_to_json(filepath)
+        assert os.path.exists(filepath)
+
+        # Load and verify
+        loaded = Owner.load_from_json(filepath)
+        assert loaded.name == "Jordan"
+        assert len(loaded.pets) == 2
+        assert loaded.pets[0].name == "Mochi"
+        assert len(loaded.pets[0].tasks) == 1
+        assert loaded.pets[0].tasks[0].description == "Walk"
+        assert loaded.pets[0].tasks[0].priority == "high"
+        assert loaded.pets[0].tasks[0].frequency == "daily"
+        assert loaded.pets[1].name == "Luna"
+
+    def test_load_json_preserves_task_dates(self, tmp_path):
+        """Dates should survive JSON serialization."""
+        filepath = str(tmp_path / "test_dates.json")
+        owner = Owner(name="Jordan")
+        pet = Pet(name="Mochi", species="dog")
+        today = date.today()
+        pet.add_task(Task(description="Walk", time="07:30", duration_minutes=30, due_date=today))
+        owner.add_pet(pet)
+
+        owner.save_to_json(filepath)
+        loaded = Owner.load_from_json(filepath)
+        assert loaded.pets[0].tasks[0].due_date == today
 
 
 # --- Scheduler tests ---
@@ -178,7 +262,6 @@ class TestScheduler:
         """Scheduler should detect when two tasks share the same time slot."""
         scheduler = self._make_scheduler()
         conflicts = scheduler.detect_conflicts()
-        # Feed Mochi and Feed Luna are both at 08:00
         assert len(conflicts) >= 1
         assert "08:00" in conflicts[0]
 
@@ -218,7 +301,6 @@ class TestScheduler:
     def test_generate_schedule_pending_only(self):
         """generate_schedule should only include pending tasks."""
         scheduler = self._make_scheduler()
-        # Complete one task
         all_tasks = scheduler.get_all_tasks()
         all_tasks[0].mark_complete()
 
@@ -233,3 +315,63 @@ class TestScheduler:
         assert scheduler.generate_schedule() == []
         assert scheduler.detect_conflicts() == []
         assert scheduler.sort_by_time() == []
+
+    # --- Challenge 1: find_next_available_slot tests ---
+
+    def test_find_slot_empty_schedule(self):
+        """With no tasks, the first available slot should be the start time."""
+        owner = Owner(name="Jordan")
+        owner.add_pet(Pet(name="Mochi", species="dog"))
+        scheduler = Scheduler(owner=owner)
+        slot = scheduler.find_next_available_slot(30)
+        assert slot == "07:00"
+
+    def test_find_slot_skips_occupied(self):
+        """Slot finder should skip over occupied time ranges."""
+        owner = Owner(name="Jordan")
+        pet = Pet(name="Mochi", species="dog")
+        # Block 07:00-07:30
+        pet.add_task(Task(description="Walk", time="07:00", duration_minutes=30))
+        owner.add_pet(pet)
+        scheduler = Scheduler(owner=owner)
+        slot = scheduler.find_next_available_slot(30)
+        assert slot == "07:30"
+
+    def test_find_slot_respects_duration(self):
+        """A long task should only fit in a slot wide enough for it."""
+        owner = Owner(name="Jordan")
+        pet = Pet(name="Mochi", species="dog")
+        # Block 07:00-07:30 and 08:00-08:30
+        pet.add_task(Task(description="Walk", time="07:00", duration_minutes=30))
+        pet.add_task(Task(description="Feed", time="08:00", duration_minutes=30))
+        owner.add_pet(pet)
+        scheduler = Scheduler(owner=owner)
+        # 60-min task can't fit in 07:30-08:00 gap (only 30 min)
+        slot = scheduler.find_next_available_slot(60)
+        assert slot == "08:30"
+
+    def test_find_slot_no_room_returns_none(self):
+        """If the day is fully booked, return None."""
+        owner = Owner(name="Jordan")
+        pet = Pet(name="Mochi", species="dog")
+        # Fill every 30-min slot from 07:00 to 21:00 (28 slots)
+        for hour in range(7, 21):
+            for minute in [0, 30]:
+                pet.add_task(Task(
+                    description=f"Task {hour}:{minute:02d}",
+                    time=f"{hour:02d}:{minute:02d}",
+                    duration_minutes=30,
+                ))
+        owner.add_pet(pet)
+        scheduler = Scheduler(owner=owner)
+        assert scheduler.find_next_available_slot(30) is None
+
+    def test_find_slot_ignores_completed_tasks(self):
+        """Completed tasks should not block time slots."""
+        owner = Owner(name="Jordan")
+        pet = Pet(name="Mochi", species="dog")
+        pet.add_task(Task(description="Walk", time="07:00", duration_minutes=30, completed=True))
+        owner.add_pet(pet)
+        scheduler = Scheduler(owner=owner)
+        slot = scheduler.find_next_available_slot(30)
+        assert slot == "07:00"  # 07:00 is free because the task is completed

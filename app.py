@@ -3,21 +3,38 @@ PawPal+ Streamlit App
 Interactive pet care management UI connected to the backend logic layer.
 """
 
+import os
 import streamlit as st
 from datetime import date
 from pawpal_system import Task, Pet, Owner, Scheduler
 
+
+DATA_FILE = "data.json"
 
 # --- Page config ---
 st.set_page_config(page_title="PawPal+", page_icon="🐾", layout="centered")
 st.title("🐾 PawPal+")
 st.caption("A smart pet care management system")
 
-# --- Session state initialization ---
+# --- Session state initialization with JSON persistence ---
 if "owner" not in st.session_state:
-    st.session_state.owner = None
+    if os.path.exists(DATA_FILE):
+        st.session_state.owner = Owner.load_from_json(DATA_FILE)
+        st.toast("Loaded saved data from data.json")
+    else:
+        st.session_state.owner = None
+
 if "scheduler" not in st.session_state:
-    st.session_state.scheduler = None
+    if st.session_state.owner is not None:
+        st.session_state.scheduler = Scheduler(owner=st.session_state.owner)
+    else:
+        st.session_state.scheduler = None
+
+
+def save_data():
+    """Save current state to JSON file."""
+    if st.session_state.owner is not None:
+        st.session_state.owner.save_to_json(DATA_FILE)
 
 
 # ============================================================
@@ -25,11 +42,16 @@ if "scheduler" not in st.session_state:
 # ============================================================
 st.subheader("Owner Setup")
 
-owner_name = st.text_input("Owner name", value="Jordan")
+default_name = st.session_state.owner.name if st.session_state.owner else "Jordan"
+owner_name = st.text_input("Owner name", value=default_name)
 
 if st.session_state.owner is None or st.session_state.owner.name != owner_name:
-    st.session_state.owner = Owner(name=owner_name)
+    if st.session_state.owner is None:
+        st.session_state.owner = Owner(name=owner_name)
+    else:
+        st.session_state.owner.name = owner_name
     st.session_state.scheduler = Scheduler(owner=st.session_state.owner)
+    save_data()
 
 owner = st.session_state.owner
 scheduler = st.session_state.scheduler
@@ -50,11 +72,11 @@ with col2:
 
 if st.button("Add Pet"):
     if new_pet_name.strip():
-        # Check for duplicate pet name
         if owner.find_pet(new_pet_name) is not None:
             st.warning(f"A pet named '{new_pet_name}' already exists.")
         else:
             owner.add_pet(Pet(name=new_pet_name, species=new_pet_species))
+            save_data()
             st.success(f"Added {new_pet_name} the {new_pet_species}!")
     else:
         st.warning("Please enter a pet name.")
@@ -89,22 +111,34 @@ else:
         task_priority = st.selectbox("Priority", ["high", "medium", "low"])
         task_frequency = st.selectbox("Frequency", ["once", "daily", "weekly"])
 
-    if st.button("Add Task"):
-        if task_desc.strip() and task_time.strip():
-            pet = owner.find_pet(task_pet)
-            if pet:
-                new_task = Task(
-                    description=task_desc,
-                    time=task_time,
-                    duration_minutes=task_duration,
-                    priority=task_priority,
-                    frequency=task_frequency,
-                    due_date=date.today(),
-                )
-                pet.add_task(new_task)
-                st.success(f"Added '{task_desc}' for {task_pet} at {task_time}.")
-        else:
-            st.warning("Please fill in task description and time.")
+    btn_col1, btn_col2 = st.columns(2)
+
+    with btn_col1:
+        if st.button("Add Task"):
+            if task_desc.strip() and task_time.strip():
+                pet = owner.find_pet(task_pet)
+                if pet:
+                    new_task = Task(
+                        description=task_desc,
+                        time=task_time,
+                        duration_minutes=task_duration,
+                        priority=task_priority,
+                        frequency=task_frequency,
+                        due_date=date.today(),
+                    )
+                    pet.add_task(new_task)
+                    save_data()
+                    st.success(f"Added '{task_desc}' for {task_pet} at {task_time}.")
+            else:
+                st.warning("Please fill in task description and time.")
+
+    with btn_col2:
+        if st.button("Suggest Time Slot"):
+            slot = scheduler.find_next_available_slot(task_duration)
+            if slot:
+                st.info(f"Next available {task_duration}-minute slot: **{slot}**")
+            else:
+                st.warning("No available slot found today (07:00–21:00).")
 
 st.divider()
 
@@ -205,6 +239,7 @@ else:
                 if not task.completed:
                     if st.button("Complete", key=f"complete_{i}_{task.description}_{task.pet_name}"):
                         next_task = scheduler.mark_task_complete(task)
+                        save_data()
                         if next_task:
                             st.success(
                                 f"Completed! Next '{task.description}' scheduled for {next_task.due_date}."
@@ -212,3 +247,25 @@ else:
                         else:
                             st.success("Task completed!")
                         st.rerun()
+
+st.divider()
+
+
+# ============================================================
+# Section 6: Data Persistence
+# ============================================================
+st.subheader("Data Management")
+col1, col2 = st.columns(2)
+with col1:
+    if st.button("Save Data"):
+        save_data()
+        st.success(f"Saved to {DATA_FILE}!")
+with col2:
+    if st.button("Load Data"):
+        if os.path.exists(DATA_FILE):
+            st.session_state.owner = Owner.load_from_json(DATA_FILE)
+            st.session_state.scheduler = Scheduler(owner=st.session_state.owner)
+            st.success("Data loaded!")
+            st.rerun()
+        else:
+            st.warning("No saved data found.")
