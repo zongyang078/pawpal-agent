@@ -31,6 +31,10 @@ The `Scheduler` class acts as the system's "brain" with the following algorithmi
 
 3. **Recurring task automation**: When `mark_task_complete()` is called on a daily/weekly task, `create_next_occurrence()` uses `timedelta(days=1)` or `timedelta(days=7)` to generate the next instance and auto-adds it to the pet's task list.
 
+4. **Next available slot finder** (Extension): `find_next_available_slot()` scans from 07:00 to 21:00 in 30-minute increments, converts HH:MM to minutes-since-midnight, and checks each candidate against all occupied time ranges using overlap detection (`candidate < occ_end and candidate_end > occ_start`). Unlike the basic conflict detection which only checks exact time matches, this algorithm is duration-aware — a 60-minute task at 08:00 correctly blocks the 08:30 slot. This was implemented using Agent Mode to coordinate changes across the Scheduler class and the Streamlit UI.
+
+5. **JSON data persistence** (Extension): The Owner class has `save_to_json()` and `load_from_json()` class methods that serialize the entire object graph (Owner → Pets → Tasks) to a `data.json` file. Each class implements `to_dict()` and `from_dict()` for clean conversion. Dates use ISO format strings for JSON compatibility. The Streamlit app auto-loads saved data on startup and saves after every mutation (add pet, add task, complete task).
+
 ## System Architecture
 
 The system uses four core classes following OOP principles with Python dataclasses:
@@ -84,10 +88,9 @@ The test suite covers:
 
 **Confidence Level**: ⭐⭐⭐⭐ (4/5) — All core behaviors are tested. Additional edge cases to explore with more time: overlapping time ranges (not just exact matches), tasks spanning midnight, and extremely large task lists.
 
-
 ## 📸 Demo
 
-<img src="demo_screenshot.png" width="600">
+<img src="demo_screenshot.png" width="600"> 
 
 ## Project Structure
 
