@@ -1,0 +1,4 @@
+Vaccination schedule for dogs
+health
+dog
+Core vaccines for dogs: Rabies (required by law, first at 12-16 weeks), DHPP (Distemper, Hepatitis, Parainfluenza, Parvovirus) at 6-8, 10-12, and 14-16 weeks, then booster at 1 year and every 3 years. Non-core vaccines depend on lifestyle: Bordetella (kennel cough) for dogs in daycare or boarding, Lyme disease for tick-prone areas, Canine Influenza for social dogs. Consult your vet for a personalized schedule.

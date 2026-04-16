@@ -1,0 +1,4 @@
+Vaccination schedule for cats
+health
+cat
+Core vaccines for cats: Rabies (first at 12-16 weeks, booster at 1 year, then every 1-3 years), FVRCP (Feline Viral Rhinotracheitis, Calicivirus, Panleukopenia) at 6-8, 10-12, and 14-16 weeks, booster at 1 year, then every 3 years. Non-core: FeLV (Feline Leukemia) recommended for outdoor cats or multi-cat households. Indoor-only cats still need core vaccines. Consult your vet for the right plan.
