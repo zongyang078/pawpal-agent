@@ -1,107 +1,160 @@
-# PawPal+ (Module 2 Project)
+# PawPal+ Agent — AI-Powered Pet Care Assistant
 
-**PawPal+** is a Streamlit-based pet care management system that helps pet owners plan and track daily care tasks for their pets.
+## Summary
 
-## Scenario
+PawPal+ Agent extends the original [PawPal+](https://github.com/zongyang078/ai110-module2show-pawpal-starter) pet care management system (Module 2 Show project) into a full **agentic AI system**. The original project was a Streamlit app with four OOP classes (Task, Pet, Owner, Scheduler) that let users manually manage pet care schedules through forms and buttons.
 
-A busy pet owner needs help staying consistent with pet care. They want an assistant that can:
+This extension adds a **natural language chat interface** powered by an AI Agent that can autonomously plan actions, call tools, retrieve pet care knowledge, and self-check its responses for safety. Users simply type what they need — "Schedule a daily walk for Mochi at 7:30am" or "How often should I bathe my dog?" — and the Agent handles the rest.
 
-- Track pet care tasks (walks, feeding, meds, enrichment, grooming, etc.)
-- Consider constraints (time available, priority, owner preferences)
-- Produce a daily plan and explain why it chose that plan
+## Architecture Overview
 
-## Features
+The system follows a **ReAct (Reason-Act-Observe)** loop architecture:
 
-- **Owner & Pet Management**: Create an owner profile and add multiple pets with species info.
-- **Task Scheduling**: Add tasks with time, duration, priority (high/medium/low), and frequency (once/daily/weekly).
-- **Sorting by Time**: View all tasks sorted chronologically using Python's `sorted()` with a lambda key on "HH:MM" strings.
-- **Sorting by Priority**: Tasks are ordered high → medium → low using a priority-weight mapping.
-- **Filtering**: Filter tasks by pet name or completion status.
-- **Conflict Warnings**: The scheduler detects when multiple tasks are scheduled at the same time and displays warnings.
-- **Daily Recurrence**: When a daily or weekly task is marked complete, a new instance is automatically created for the next due date using `timedelta`.
-- **Schedule Generation**: Produces a daily plan sorted by priority first, then by time, with a reasoning explanation.
+![System Architecture](assets/architecture.svg)
 
-## Smarter Scheduling
+**Components:**
 
-The `Scheduler` class acts as the system's "brain" with the following algorithmic features:
+- **Streamlit Chat UI** (`app.py`) — Chat interface where users interact with the Agent in natural language. Displays tool call transparency and confidence scores.
+- **AI Agent** (`agent.py`) — Core reasoning engine. Detects intent from user messages, plans which tools to call, executes them, and self-checks the response. Operates in two modes: LLM-powered (OpenAI/Anthropic API) or rule-based fallback (no API needed).
+- **Tool Registry** (`tools.py`) — Wraps all PawPal+ backend functions as callable tools with standardized schemas. Eight tools available: `add_pet`, `add_task`, `complete_task`, `get_schedule`, `get_pet_tasks`, `detect_conflicts`, `suggest_time_slot`, `search_care_info`.
+- **Knowledge Base** (`knowledge_base.py`) — Pet care RAG system with TF-IDF retrieval (stop word filtering, suffix stemming, title boosting, species relevance scoring). Loads 14 documents from external text files in the `knowledge/` directory, covering feeding, health, grooming, training, and general care for dogs, cats, birds, and hamsters. New documents can be added by dropping `.txt` files into the directory.
+- **Guardrails** (`guardrails.py`) — Safety layer that runs before and after every response. Detects emergencies (overrides response with vet referral), flags toxic food mentions, adds medical disclaimers, and computes confidence scores.
+- **Logger** (`logger.py`) — Records the full reasoning chain for every interaction: user input, detected intent, tool calls with arguments/results, guardrail checks, and final response. Supports JSON export for analysis.
+- **PawPal+ Backend** (`pawpal_system.py`) — Original OOP layer (Task, Pet, Owner, Scheduler dataclasses) with scheduling algorithms, conflict detection, JSON persistence, and the next-available-slot finder.
 
-1. **Priority-then-time sorting**: Tasks are sorted by a numeric priority weight (`high=3, medium=2, low=1`) in descending order, with time as a secondary sort key. This ensures urgent tasks surface first while maintaining chronological order within the same priority.
+**Data flow:**
+1. User types a message in the chat
+2. Agent detects intent via keyword matching (rule-based) or LLM reasoning
+3. Pre-flight guardrails check for emergencies
+4. Agent selects and executes relevant tools
+5. Post-flight guardrails check the response for safety issues
+6. Logger records the full interaction chain
+7. Response displayed with transparency (tool calls, confidence, warnings)
 
-2. **Conflict detection**: Groups pending tasks by time slot and flags any slot with 2+ tasks. This is a lightweight approach that checks exact time matches rather than overlapping durations — a reasonable tradeoff for a daily planner where most tasks are at fixed times.
+## Setup Instructions
 
-3. **Recurring task automation**: When `mark_task_complete()` is called on a daily/weekly task, `create_next_occurrence()` uses `timedelta(days=1)` or `timedelta(days=7)` to generate the next instance and auto-adds it to the pet's task list.
+### Prerequisites
 
-4. **Next available slot finder** (Extension): `find_next_available_slot()` scans from 07:00 to 21:00 in 30-minute increments, converts HH:MM to minutes-since-midnight, and checks each candidate against all occupied time ranges using overlap detection (`candidate < occ_end and candidate_end > occ_start`). Unlike the basic conflict detection which only checks exact time matches, this algorithm is duration-aware — a 60-minute task at 08:00 correctly blocks the 08:30 slot. This was implemented using Agent Mode to coordinate changes across the Scheduler class and the Streamlit UI.
+- Python 3.10+
+- (Optional) OpenAI or Anthropic API key for LLM-powered mode
 
-5. **JSON data persistence** (Extension): The Owner class has `save_to_json()` and `load_from_json()` class methods that serialize the entire object graph (Owner → Pets → Tasks) to a `data.json` file. Each class implements `to_dict()` and `from_dict()` for clean conversion. Dates use ISO format strings for JSON compatibility. The Streamlit app auto-loads saved data on startup and saves after every mutation (add pet, add task, complete task).
-
-## System Architecture
-
-The system uses four core classes following OOP principles with Python dataclasses:
-
-- **Task**: Data model for a single care activity (description, time, duration, priority, frequency, status, due date).
-- **Pet**: Holds pet info and manages a list of Task objects.
-- **Owner**: Manages multiple Pet objects and aggregates tasks across all pets.
-- **Scheduler**: The orchestration layer that sorts, filters, detects conflicts, and generates schedules by querying the Owner.
-
-See `uml_final.mermaid` for the complete class diagram, or paste it into the [Mermaid Live Editor](https://mermaid.live/) to view.
-
-## Getting Started
-
-### Setup
+### Installation
 
 ```bash
+# Clone the repository
+git clone https://github.com/zongyang078/pawpal-agent.git
+cd pawpal-agent
+
+# Create virtual environment
 python -m venv .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\activate
+
+# Install dependencies
 pip install -r requirements.txt
 ```
 
-### Run the CLI Demo
+### Running the App
 
-```bash
-python main.py
-```
-
-### Run the Streamlit App
+**Rule-based mode (no API key needed):**
 
 ```bash
 streamlit run app.py
 ```
 
-### Testing PawPal+
-
-Run the automated test suite with:
+**LLM-powered mode (recommended):**
 
 ```bash
-python -m pytest tests/test_pawpal.py -v
+# Option 1: OpenAI
+export OPENAI_API_KEY="your-key-here"
+streamlit run app.py
+
+# Option 2: Anthropic
+export ANTHROPIC_API_KEY="your-key-here"
+streamlit run app.py
 ```
 
-The test suite covers:
+### Running Tests
 
-- **Task completion**: Verifying `mark_complete()` changes status correctly.
-- **Task addition**: Confirming adding tasks increases pet's task count and sets `pet_name`.
-- **Sorting correctness**: Tasks are returned in chronological order after `sort_by_time()`.
-- **Priority sorting**: High priority tasks come before low priority tasks.
-- **Recurrence logic**: Completing a daily task creates a new task for the following day.
-- **Conflict detection**: Scheduler flags duplicate time slots, no false positives on unique times.
-- **Edge cases**: Empty pets, already-completed tasks, nonexistent removal targets.
+```bash
+python -m pytest tests/test_pawpal_agent.py -v
+```
 
-**Confidence Level**: ⭐⭐⭐⭐ (4/5) — All core behaviors are tested. Additional edge cases to explore with more time: overlapping time ranges (not just exact matches), tasks spanning midnight, and extremely large task lists.
+## Sample Interactions
 
-## 📸 Demo
+### Example 1: Adding a pet and scheduling tasks
 
-<img src="demo_screenshot.png" width="600"> 
+![Demo: Add pet and schedule tasks](assets/demo_chat.png)
+
+### Example 2: Today's schedule
+
+![Demo: Today's schedule](assets/demo_schedule.png)
+
+### Example 3: Pet care knowledge retrieval (RAG)
+
+![Demo: RAG knowledge retrieval](assets/demo_rag.png)
+
+### Example 4: Emergency detection (guardrail override)
+
+![Demo: Emergency detection](assets/demo_emergency.png)
+
+### Sidebar: Status panel
+
+![Demo: Sidebar status](assets/demo_sidebar.png)
+
+## Design Decisions
+
+**Why Agentic Workflow over RAG-only or Fine-tuning?** The original PawPal+ already had multiple functional modules (scheduling, conflict detection, persistence). An agentic architecture lets the AI orchestrate these existing capabilities through tool calling, which is more powerful than just adding a knowledge lookup. It also makes the system extensible — adding a new capability means registering a new tool, not retraining a model.
+
+**Why dual-mode (LLM + rule-based)?** Not everyone has API access, and the assignment requires the project to "run correctly and reproducibly." The rule-based fallback ensures the system works out of the box while the LLM mode provides superior natural language understanding.
+
+**Why TF-IDF for retrieval instead of embeddings?** For a knowledge base of 14 documents, TF-IDF with stop word filtering, suffix stemming, title boosting, and species relevance scoring is fast, interpretable, and requires no external dependencies or API calls. Embedding-based retrieval would be overkill here and add complexity without meaningful improvement at this scale.
+
+**Why keyword-based guardrails instead of LLM-based safety?** Guardrails need to be fast, deterministic, and always-on. A keyword-based toxic food checker will never miss "chocolate" regardless of how it's phrased, while an LLM might occasionally let it through. For safety-critical checks, deterministic rules are more reliable.
+
+## Testing Summary
+
+The test suite contains **58 tests** across 7 categories:
+
+| Category | Tests | Status |
+|---|---|---|
+| Task dataclass logic | 6 | All passing |
+| Pet management | 4 | All passing |
+| Scheduler algorithms | 6 | All passing |
+| Tool execution | 9 | All passing |
+| Guardrails & safety | 10 | All passing |
+| Knowledge base retrieval | 5 | All passing |
+| Agent intent + end-to-end | 14 | All passing |
+| Logger | 4 | All passing |
+
+**Key findings from testing:**
+
+- The rule-based intent detector correctly identifies 7 out of 8 intent categories on simple inputs, but struggles with ambiguous messages (e.g., "Can you help with Mochi?" could be schedule or care question). The LLM mode handles these correctly.
+- Guardrails successfully block all tested toxic food recommendations and detect all emergency keywords. Confidence scoring averaged 0.65 for successful tool executions and 0.3 for no-tool interactions.
+- The knowledge base returns relevant results for all tested pet care queries and correctly returns "no results" for off-topic queries.
+
+## Reflection
+
+Building this project taught me how agentic AI systems work at an architectural level — the ReAct loop isn't just a buzzword but a concrete pattern of reasoning, acting, and observing that maps cleanly to software engineering concepts like the command pattern and middleware chains. The hardest part was designing the intent detection and parameter extraction for the rule-based mode; it made me appreciate how much work LLMs do in understanding natural language compared to regex-based approaches.
+
+The guardrails module was the most eye-opening part. Writing deterministic safety checks forced me to think through failure modes I wouldn't have considered — what happens if the AI recommends chocolate to a dog owner? What if someone describes an emergency and the AI tries to schedule a task instead? These aren't hypothetical; they're the kinds of failures that make AI systems dangerous in practice.
 
 ## Project Structure
 
 ```
-├── pawpal_system.py      # Backend logic layer (Task, Pet, Owner, Scheduler)
-├── app.py                # Streamlit UI
-├── main.py               # CLI demo script
+pawpal-agent/
+├── pawpal_system.py      # Original PawPal+ backend (Task, Pet, Owner, Scheduler)
+├── agent.py              # AI Agent with ReAct loop
+├── tools.py              # Tool registry (8 tools)
+├── knowledge_base.py     # Pet care RAG with TF-IDF retrieval
+├── guardrails.py         # Safety checks (toxic food, emergency, vet referral)
+├── logger.py             # Interaction logging system
+├── app.py                # Streamlit chat UI
 ├── tests/
-│   └── test_pawpal.py    # Automated test suite
-├── uml_final.mermaid     # Final UML class diagram
-├── reflection.md         # Project reflection
-├── requirements.txt      # Dependencies
-└── README.md             # This file
+│   └── test_pawpal_agent.py  # 58 tests across 7 categories
+├── knowledge/            # 14 pet care documents (.txt files)
+├── assets/               # Architecture diagram and demo screenshots
+├── logs/                 # Agent interaction logs (auto-created)
+├── requirements.txt
+├── model_card.md         # Reflection and ethics
+└── .gitignore
 ```
