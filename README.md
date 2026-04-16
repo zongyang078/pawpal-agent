@@ -149,12 +149,16 @@ pawpal-agent/
 ├── guardrails.py         # Safety checks (toxic food, emergency, vet referral)
 ├── logger.py             # Interaction logging system
 ├── app.py                # Streamlit chat UI
+├── main.py               # Original CLI demo (from base project)
 ├── tests/
-│   └── test_pawpal_agent.py  # 58 tests across 7 categories
+│   ├── test_pawpal.py        # Original PawPal+ tests (from base project)
+│   └── test_pawpal_agent.py  # 58 Agent tests across 7 categories
 ├── knowledge/            # 14 pet care documents (.txt files)
 ├── assets/               # Architecture diagram and demo screenshots
 ├── logs/                 # Agent interaction logs (auto-created)
-├── requirements.txt
+├── reflection.md         # Original project reflection (from base project)
+├── uml_final.mermaid     # Original UML class diagram (from base project)
 ├── model_card.md         # Reflection and ethics
+├── requirements.txt
 └── .gitignore
 ```
