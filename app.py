@@ -1,271 +1,188 @@
 """
-PawPal+ Streamlit App
-Interactive pet care management UI connected to the backend logic layer.
+PawPal+ Agent — Streamlit Chat Interface
+
+A chat-based UI where users interact with the PawPal+ AI Agent
+using natural language. The agent manages pet care schedules,
+answers care questions, and provides proactive safety advice.
 """
 
 import os
+
 import streamlit as st
-from datetime import date
-from pawpal_system import Task, Pet, Owner, Scheduler
 
+from agent import PawPalAgent
+from pawpal_system import Owner
 
-DATA_FILE = "data.json"
 
 # --- Page config ---
-st.set_page_config(page_title="PawPal+", page_icon="🐾", layout="centered")
-st.title("🐾 PawPal+")
-st.caption("A smart pet care management system")
+st.set_page_config(page_title="PawPal+ Agent", page_icon="🐾", layout="centered")
+st.title("🐾 PawPal+ Agent")
+st.caption("AI-powered pet care assistant — chat naturally to manage your pets")
 
-# --- Session state initialization with JSON persistence ---
+
+# --- Session state initialization ---
 if "owner" not in st.session_state:
-    if os.path.exists(DATA_FILE):
-        st.session_state.owner = Owner.load_from_json(DATA_FILE)
-        st.toast("Loaded saved data from data.json")
+    # Try to load from saved data
+    loaded = Owner.load_from_json()
+    if loaded:
+        st.session_state.owner = loaded
     else:
-        st.session_state.owner = None
+        st.session_state.owner = Owner(name="Pet Parent")
 
-if "scheduler" not in st.session_state:
-    if st.session_state.owner is not None:
-        st.session_state.scheduler = Scheduler(owner=st.session_state.owner)
+if "agent" not in st.session_state:
+    api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")
+    provider = "anthropic" if os.environ.get("ANTHROPIC_API_KEY") else "openai"
+    model = "claude-sonnet-4-20250514" if provider == "anthropic" else "gpt-4o-mini"
+
+    st.session_state.agent = PawPalAgent(
+        owner=st.session_state.owner,
+        api_key=api_key,
+        api_provider=provider,
+        model=model,
+        use_llm=api_key is not None,
+    )
+
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+
+agent: PawPalAgent = st.session_state.agent
+owner: Owner = st.session_state.owner
+
+
+# --- Sidebar: Status and settings ---
+with st.sidebar:
+    st.subheader("Status")
+
+    # LLM mode indicator
+    if agent.use_llm:
+        st.success(f"LLM mode: {agent.api_provider} ({agent.model})")
     else:
-        st.session_state.scheduler = None
+        st.info("Rule-based mode (no API key set)")
+        st.caption(
+            "Set OPENAI_API_KEY or ANTHROPIC_API_KEY environment variable "
+            "to enable LLM-powered reasoning."
+        )
 
+    st.divider()
 
-def save_data():
-    """Save current state to JSON file."""
-    if st.session_state.owner is not None:
-        st.session_state.owner.save_to_json(DATA_FILE)
+    # Owner name
+    owner_name = st.text_input("Your name", value=owner.name)
+    if owner_name != owner.name:
+        owner.name = owner_name
 
+    st.divider()
 
-# ============================================================
-# Section 1: Owner Setup
-# ============================================================
-st.subheader("Owner Setup")
-
-default_name = st.session_state.owner.name if st.session_state.owner else "Jordan"
-owner_name = st.text_input("Owner name", value=default_name)
-
-if st.session_state.owner is None or st.session_state.owner.name != owner_name:
-    if st.session_state.owner is None:
-        st.session_state.owner = Owner(name=owner_name)
-    else:
-        st.session_state.owner.name = owner_name
-    st.session_state.scheduler = Scheduler(owner=st.session_state.owner)
-    save_data()
-
-owner = st.session_state.owner
-scheduler = st.session_state.scheduler
-
-st.divider()
-
-
-# ============================================================
-# Section 2: Manage Pets
-# ============================================================
-st.subheader("Manage Pets")
-
-col1, col2 = st.columns(2)
-with col1:
-    new_pet_name = st.text_input("Pet name", value="Mochi")
-with col2:
-    new_pet_species = st.selectbox("Species", ["dog", "cat", "bird", "hamster", "other"])
-
-if st.button("Add Pet"):
-    if new_pet_name.strip():
-        if owner.find_pet(new_pet_name) is not None:
-            st.warning(f"A pet named '{new_pet_name}' already exists.")
-        else:
-            owner.add_pet(Pet(name=new_pet_name, species=new_pet_species))
-            save_data()
-            st.success(f"Added {new_pet_name} the {new_pet_species}!")
-    else:
-        st.warning("Please enter a pet name.")
-
-if owner.pets:
-    st.markdown("**Your pets:**")
-    for pet in owner.pets:
-        st.write(f"- {pet}")
-else:
-    st.info("No pets yet. Add one above!")
-
-st.divider()
-
-
-# ============================================================
-# Section 3: Add Tasks
-# ============================================================
-st.subheader("Add Tasks")
-
-if not owner.pets:
-    st.info("Add a pet first before scheduling tasks.")
-else:
-    pet_names = [p.name for p in owner.pets]
-
-    col1, col2 = st.columns(2)
-    with col1:
-        task_pet = st.selectbox("Assign to pet", pet_names)
-        task_desc = st.text_input("Task description", value="Morning walk")
-        task_time = st.text_input("Time (HH:MM)", value="08:00")
-    with col2:
-        task_duration = st.number_input("Duration (minutes)", min_value=1, max_value=240, value=20)
-        task_priority = st.selectbox("Priority", ["high", "medium", "low"])
-        task_frequency = st.selectbox("Frequency", ["once", "daily", "weekly"])
-
-    btn_col1, btn_col2 = st.columns(2)
-
-    with btn_col1:
-        if st.button("Add Task"):
-            if task_desc.strip() and task_time.strip():
-                pet = owner.find_pet(task_pet)
-                if pet:
-                    new_task = Task(
-                        description=task_desc,
-                        time=task_time,
-                        duration_minutes=task_duration,
-                        priority=task_priority,
-                        frequency=task_frequency,
-                        due_date=date.today(),
-                    )
-                    pet.add_task(new_task)
-                    save_data()
-                    st.success(f"Added '{task_desc}' for {task_pet} at {task_time}.")
-            else:
-                st.warning("Please fill in task description and time.")
-
-    with btn_col2:
-        if st.button("Suggest Time Slot"):
-            slot = scheduler.find_next_available_slot(task_duration)
-            if slot:
-                st.info(f"Next available {task_duration}-minute slot: **{slot}**")
-            else:
-                st.warning("No available slot found today (07:00–21:00).")
-
-st.divider()
-
-
-# ============================================================
-# Section 4: Today's Schedule
-# ============================================================
-st.subheader("Today's Schedule")
-
-if st.button("Generate Schedule"):
-    schedule = scheduler.generate_schedule()
-
-    if not schedule:
-        st.info("No tasks scheduled for today.")
-    else:
-        # Show conflict warnings first
-        conflicts = scheduler.detect_conflicts()
-        for warning in conflicts:
-            st.warning(f"⚠️ {warning}")
-
-        # Build schedule table
-        schedule_data = []
-        for task in schedule:
-            priority_emoji = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(task.priority, "")
-            schedule_data.append({
-                "Time": task.time,
-                "Task": task.description,
-                "Pet": task.pet_name,
-                "Duration": f"{task.duration_minutes} min",
-                "Priority": f"{priority_emoji} {task.priority}",
-                "Frequency": task.frequency,
-            })
-        st.table(schedule_data)
-
-        # Explanation of the schedule
-        with st.expander("Why this order?"):
-            st.markdown(
-                "The schedule is sorted by **priority** first (high → medium → low), "
-                "then by **time** within the same priority level. "
-                "This ensures urgent tasks are always attended to first."
+    # Current pets summary
+    st.subheader("Your Pets")
+    if owner.pets:
+        for pet in owner.pets:
+            pending = len(pet.get_pending_tasks())
+            emoji = {"dog": "🐕", "cat": "🐈", "bird": "🐦", "hamster": "🐹"}.get(
+                pet.species, "🐾"
             )
-
-st.divider()
-
-
-# ============================================================
-# Section 5: Manage & Complete Tasks
-# ============================================================
-st.subheader("Manage Tasks")
-
-all_pending = scheduler.filter_by_status(completed=False)
-
-if not all_pending:
-    st.info("No pending tasks.")
-else:
-    # Filter options
-    filter_col1, filter_col2 = st.columns(2)
-    with filter_col1:
-        filter_pet = st.selectbox(
-            "Filter by pet",
-            ["All"] + [p.name for p in owner.pets],
-            key="filter_pet",
-        )
-    with filter_col2:
-        filter_status = st.selectbox(
-            "Filter by status",
-            ["Pending", "Completed", "All"],
-            key="filter_status",
-        )
-
-    # Apply filters
-    if filter_pet != "All":
-        display_tasks = scheduler.filter_by_pet(filter_pet)
+            st.write(f"{emoji} **{pet.name}** ({pet.species}) — {pending} pending")
     else:
-        display_tasks = scheduler.get_all_tasks()
+        st.caption("No pets yet. Tell the agent about your pet!")
 
-    if filter_status == "Pending":
-        display_tasks = [t for t in display_tasks if not t.completed]
-    elif filter_status == "Completed":
-        display_tasks = [t for t in display_tasks if t.completed]
+    st.divider()
 
-    # Sort for display
-    display_tasks = scheduler.sort_by_time(display_tasks)
+    # Agent log summary
+    st.subheader("Agent Log")
+    summary = agent.logger.get_summary()
+    st.caption(
+        f"Interactions: {summary['total_interactions']} | "
+        f"Tool calls: {summary.get('total_tool_calls', 0)} | "
+        f"Guardrail triggers: {summary.get('guardrail_triggers', 0)}"
+    )
 
-    if not display_tasks:
-        st.info("No tasks match the current filters.")
-    else:
-        for i, task in enumerate(display_tasks):
-            status_icon = "✅" if task.completed else "⬜"
-            priority_emoji = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(task.priority, "")
-            col1, col2 = st.columns([4, 1])
-            with col1:
-                st.write(
-                    f"{status_icon} **{task.time}** - {task.description} "
-                    f"({task.pet_name}) {priority_emoji} {task.duration_minutes}min"
-                )
-            with col2:
-                if not task.completed:
-                    if st.button("Complete", key=f"complete_{i}_{task.description}_{task.pet_name}"):
-                        next_task = scheduler.mark_task_complete(task)
-                        save_data()
-                        if next_task:
-                            st.success(
-                                f"Completed! Next '{task.description}' scheduled for {next_task.due_date}."
-                            )
-                        else:
-                            st.success("Task completed!")
-                        st.rerun()
+    if st.button("Save Logs"):
+        filepath = agent.logger.save_to_file()
+        st.success(f"Saved to {filepath}")
 
-st.divider()
+    if st.button("Save Pet Data"):
+        owner.save_to_json()
+        st.success("Saved to data.json")
 
 
-# ============================================================
-# Section 6: Data Persistence
-# ============================================================
-st.subheader("Data Management")
-col1, col2 = st.columns(2)
-with col1:
-    if st.button("Save Data"):
-        save_data()
-        st.success(f"Saved to {DATA_FILE}!")
-with col2:
-    if st.button("Load Data"):
-        if os.path.exists(DATA_FILE):
-            st.session_state.owner = Owner.load_from_json(DATA_FILE)
-            st.session_state.scheduler = Scheduler(owner=st.session_state.owner)
-            st.success("Data loaded!")
-            st.rerun()
-        else:
-            st.warning("No saved data found.")
+# --- Chat display ---
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
+
+        # Show tool calls in expander for assistant messages
+        if msg["role"] == "assistant" and msg.get("tool_calls"):
+            with st.expander("Agent reasoning", expanded=False):
+                for tc in msg["tool_calls"]:
+                    st.code(f"Tool: {tc['name']}\nArgs: {tc.get('args', {})}\nResult: {tc.get('result', '')[:200]}")
+
+        # Show confidence and warnings
+        if msg["role"] == "assistant" and msg.get("confidence"):
+            confidence = msg["confidence"]
+            if confidence < 0.4:
+                st.caption(f"⚠️ Low confidence ({confidence:.0%})")
+            elif confidence < 0.7:
+                st.caption(f"Confidence: {confidence:.0%}")
+
+        if msg["role"] == "assistant" and msg.get("warnings"):
+            for w in msg["warnings"]:
+                st.warning(w)
+
+
+# --- Welcome message ---
+if not st.session_state.messages:
+    welcome = (
+        "Welcome to PawPal+ Agent! I'm your AI-powered pet care assistant. "
+        "Here are some things you can try:\n\n"
+        "- **Add a pet**: \"Add Mochi, a golden retriever\"\n"
+        "- **Schedule tasks**: \"Schedule a walk for Mochi at 7:30am daily\"\n"
+        "- **Check schedule**: \"What's on today's schedule?\"\n"
+        "- **Ask care questions**: \"How often should I bathe my dog?\"\n"
+        "- **Mark tasks done**: \"Finished Mochi's morning walk\"\n"
+        "- **Find time slots**: \"When's the next free 30-minute slot?\"\n"
+    )
+    st.session_state.messages.append({"role": "assistant", "content": welcome})
+    with st.chat_message("assistant"):
+        st.markdown(welcome)
+
+
+# --- Chat input ---
+if user_input := st.chat_input("Ask me anything about pet care..."):
+    # Display user message
+    st.session_state.messages.append({"role": "user", "content": user_input})
+    with st.chat_message("user"):
+        st.markdown(user_input)
+
+    # Process through agent
+    with st.chat_message("assistant"):
+        with st.spinner("Thinking..."):
+            response = agent.process(user_input)
+
+        st.markdown(response.message)
+
+        # Show tool calls
+        if response.tool_calls_made:
+            with st.expander("Agent reasoning", expanded=False):
+                for tc in response.tool_calls_made:
+                    st.code(
+                        f"Tool: {tc['name']}\n"
+                        f"Args: {tc.get('args', {})}\n"
+                        f"Result: {tc.get('result', '')[:200]}"
+                    )
+
+        # Show confidence
+        if response.confidence < 0.4:
+            st.caption(f"⚠️ Low confidence ({response.confidence:.0%})")
+
+        # Show guardrail warnings
+        for w in response.guardrail_warnings:
+            st.warning(w)
+
+    # Save to session
+    st.session_state.messages.append({
+        "role": "assistant",
+        "content": response.message,
+        "tool_calls": response.tool_calls_made,
+        "confidence": response.confidence,
+        "warnings": response.guardrail_warnings,
+    })
