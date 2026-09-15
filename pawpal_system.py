@@ -130,6 +130,10 @@ class Owner:
 
     name: str
     pets: list[Pet] = field(default_factory=list)
+    # Where this graph is persisted. Callers deep in the tool layer save without
+    # knowing the path, so it travels with the object rather than being passed
+    # down. Not part of to_dict() -- it describes the file, not the data.
+    data_path: str = "data.json"
 
     def add_pet(self, pet: Pet) -> None:
         """Add a pet to this owner's collection."""
@@ -161,20 +165,24 @@ class Owner:
         owner.pets = pets
         return owner
 
-    def save_to_json(self, filepath: str = "data.json") -> None:
-        """Save the entire owner/pet/task graph to a JSON file."""
-        with open(filepath, "w") as f:
+    def save_to_json(self, filepath: str | None = None) -> None:
+        """Save the entire owner/pet/task graph. Defaults to self.data_path."""
+        path = filepath or self.data_path
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(self.to_dict(), f, indent=2)
+        self.data_path = path
 
     @classmethod
     def load_from_json(cls, filepath: str = "data.json") -> Optional["Owner"]:
         """Load an owner from a JSON file. Returns None if file not found."""
         try:
-            with open(filepath, "r") as f:
+            with open(filepath, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            return cls.from_dict(data)
         except FileNotFoundError:
             return None
+        owner = cls.from_dict(data)
+        owner.data_path = filepath
+        return owner
 
     def __str__(self) -> str:
         return f"Owner: {self.name} ({len(self.pets)} pet(s))"
