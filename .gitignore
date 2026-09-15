@@ -1,11 +1,23 @@
+# Python
 __pycache__/
 *.pyc
-.venv/
-venv/
-.env
-data.json
-logs/
 *.egg-info/
 dist/
 build/
+
+# Environments
+.venv/
+venv/
+.env
+
+# Tooling
 .pytest_cache/
+.coverage
+htmlcov/
+
+# Runtime state
+data.json
+logs/
+
+# OS
+.DS_Store

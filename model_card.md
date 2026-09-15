@@ -1,47 +1,135 @@
 # PawPal+ Agent — Model Card
 
-## Base Project
+## Overview
 
-This project extends **PawPal+** (Module 2 Show), originally a Streamlit pet care management system with four OOP classes (Task, Pet, Owner, Scheduler), priority-based scheduling algorithms, conflict detection, recurring task automation, and JSON persistence. The original project demonstrated OOP design, algorithm implementation, and Streamlit UI development.
+PawPal+ Agent is a pet care scheduling assistant with a natural language
+interface. It combines a deterministic scheduling backend with an LLM-driven
+tool-calling loop, a small TF-IDF retrieval layer over pet care documents, and a
+rule-based safety layer that runs before and after every response.
 
-## What Changed
+The system is a thin orchestration layer over its own tools. It does not
+fine-tune, train, or host a model — it calls the OpenAI or Anthropic API, and
+falls back to keyword-based dispatch when no API key is configured.
 
-The extension adds an **agentic AI layer** that transforms PawPal+ from a form-based CRUD app into a conversational AI assistant. Key additions: a ReAct-loop Agent with intent detection and tool calling, a pet care knowledge base with 14 external documents and TF-IDF retrieval including stop word filtering, suffix stemming, title boosting, and species relevance scoring (RAG), safety guardrails (toxic food detection, emergency override, medical disclaimers, confidence scoring), interaction logging, and a chat-based Streamlit interface. The system supports both LLM-powered (OpenAI gpt-4o-mini / Anthropic Claude) and rule-based operation modes.
+| | |
+|---|---|
+| Reasoning | OpenAI (`gpt-4o-mini`) or Anthropic (`claude-sonnet-4-20250514`), configurable |
+| Fallback | Deterministic keyword intent detection, no API required |
+| Tools | 8, exposed as JSON Schema function definitions |
+| Retrieval | Hand-rolled TF-IDF over 14 documents, no embeddings |
+| Safety | 3 keyword tables (18 toxic substances, 15 emergency, 16 referral) |
 
-## Limitations and Biases
+## Intended Use
 
-**Knowledge base coverage is limited.** The knowledge base has 14 external documents (loaded from the `knowledge/` directory) covering common dog, cat, bird, and hamster care topics. It lacks coverage for exotic pets, breed-specific needs, regional veterinary practices, and many medical conditions. Users may receive "no relevant information" for perfectly valid questions. Documents can be expanded by adding new `.txt` files to the directory.
+Helping a pet owner keep track of routine care for common household pets — dogs,
+cats, birds, and hamsters. Concretely: registering pets, scheduling and
+completing recurring tasks, surfacing scheduling conflicts, finding open time
+slots, and answering general husbandry questions about feeding, grooming,
+exercise, and vaccination timing.
 
-**English-only.** The intent detection, knowledge base, and guardrails all operate on English text. Non-English inputs will likely fail silently — the system may misidentify intent or miss safety-critical keywords.
+It is built as a demonstration of agentic system design. It is not a product and
+has not been deployed to real users.
 
-**Rule-based mode has low recall on ambiguous inputs.** The keyword-matching intent detector works well for clear, direct commands but struggles with indirect requests ("Can you help with Mochi?" or "I'm worried about my cat") that a human would understand immediately.
+## Out of Scope
 
-**Species bias toward dogs and cats.** The knowledge base has significantly more content about dogs (5 documents) and cats (5 documents) compared to birds (1) and hamsters (1). Users with less common pets will receive lower quality advice.
+- **Veterinary diagnosis or treatment.** The system cannot assess a specific
+  animal. Health responses carry a disclaimer, and messages matching emergency
+  keywords are answered only with a referral to an emergency vet.
+- **Dosing, drug interactions, or medication advice** of any kind.
+- **Exotic species.** The corpus covers four species; anything else falls back
+  to generic text or returns no result.
+- **Multi-user or concurrent use.** State is a single JSON file rewritten in
+  full on every change, with no locking.
 
-**No real-time medical knowledge.** The system has no access to current veterinary research, drug interactions, or outbreak information. All medical advice is based on static, general-purpose text.
+## Limitations
 
-## Potential Misuse and Mitigations
+**Knowledge base coverage is narrow.** Fourteen documents covering common dog,
+cat, bird, and hamster topics. No breed-specific guidance, regional veterinary
+practice, or medical conditions. Valid questions can return "no relevant
+information".
 
-**Risk: Relying on AI for medical decisions.** A user might trust the Agent's health advice and delay seeing a vet. **Mitigation:** The guardrails add medical disclaimers to any health-related response, and emergency keywords trigger an immediate vet referral that overrides the normal response.
+**Species coverage is unbalanced.** Dogs have 5 documents and cats 5, against 1
+each for birds and hamsters. Advice quality degrades accordingly.
 
-**Risk: Toxic food recommendation.** If the LLM hallucinates or the rule-based system misinterprets a query, it could suggest feeding something harmful. **Mitigation:** The post-response guardrail scans for known toxic foods by species and flags any that aren't already marked as dangerous in the response.
+**English only.** Intent detection, retrieval, and every guardrail keyword table
+operate on English text. Non-English input fails silently — it will misroute
+intent and, more seriously, miss safety keywords entirely.
 
-**Risk: False sense of completeness.** Users might assume the knowledge base covers everything about pet care. **Mitigation:** Every knowledge base response includes a disclaimer. The confidence score is displayed in the UI — low scores alert users that the system isn't sure.
+**Rule-based mode has low recall on indirect phrasing.** Keyword matching
+handles direct commands well but misses requests like "Can you help with
+Mochi?" or "I'm worried about my cat". LLM mode handles these; the fallback
+does not.
 
-## Testing and Reliability Observations
+**No real-time knowledge.** All content is static text. No access to current
+veterinary research, recalls, or outbreak information.
 
-**What surprised me:** The toxic food guardrail caught a real edge case during testing — when I asked "Can my dog eat grapes?", the knowledge base correctly mentioned grapes in the feeding guidelines document (which says to avoid them), but the response included the word "grapes" in a context that could be ambiguous. The guardrail's context-window check (looking for "toxic" or "avoid" near the word) correctly identified that the response already warned against grapes, so it didn't double-flag. This kind of nuanced checking is exactly what deterministic guardrails are good at.
+**Retrieval has no chunking or vector scoring.** Whole documents are the
+retrieval unit and whole documents are returned, scored by a raw TF-IDF weighted
+sum with no length normalisation. This is adequate at 14 documents and would not
+be at 140.
 
-**What didn't work well initially:** The confidence scoring heuristic is crude — it mostly checks for error strings and result length. A more robust approach would use the LLM itself to rate confidence or track historical accuracy per tool. The current scoring can assign high confidence to a completely wrong but long response.
+## Safety Design and Known Gaps
 
-**Interesting failure mode:** In rule-based mode, "I finished walking Mochi" correctly detects intent as "complete_task" and extracts "Mochi" as the pet name, but it matches the task by checking if any word from the task description appears in the message. This means "finished walking" matches "Morning walk" because of "walk" — which works, but it would also match "I want to walk to the store" if that message somehow got classified as a completion intent.
+Three deterministic checks run around every response. They are keyword tables
+rather than model-based classifiers, chosen because safety checks should be
+fast, always-on, and produce the same answer every time.
 
-## AI Collaboration During This Project
+| Check | When | Effect |
+|---|---|---|
+| Emergency | Before tools run | Replaces the response with a vet referral |
+| Vet referral | Around the response | Appends a medical disclaimer |
+| Toxic food | After the response | Appends a safety warning if an unwarned toxic item appears |
 
-**Helpful suggestion:** When designing the guardrails module, I asked Claude to help me think through safety edge cases. It suggested the "context-window check" for toxic foods — instead of just flagging any mention of a toxic food, checking whether the surrounding text already contains warning language. This was a much better approach than my initial plan of blindly flagging every mention, which would have triggered false positives on the knowledge base's own warnings.
+**Gaps found during testing, not yet fixed.** These are pinned as strict `xfail`
+tests so they cannot be forgotten:
 
-**Flawed suggestion:** When I initially asked Claude to help design the intent detection system, it suggested using sentence embeddings with cosine similarity against a bank of example utterances per intent. While technically more accurate, this would have added a dependency on a sentence-transformer model (~400MB download) and significantly increased startup time — overkill for a system with 8 intent categories where keyword matching gets the job done for the rule-based fallback mode. I chose the simpler approach and reserved sophisticated NLU for the LLM mode.
+1. **A medical keyword suppresses the answer entirely.** The pre-flight check is
+   called with an empty response string, so a vet-referral keyword makes the
+   modified response non-empty and the agent mistakes it for an emergency
+   override. Asking "my dog has a lump, how often should I feed him?" returns
+   the disclaimer and nothing else — at a reported confidence of 1.0.
+2. **Keyword tables match bare substrings.** "plump" contains "lump", and
+   "swallowed his food" contains "swallowed", so both trigger false positives.
+3. **The toxic food check can be talked out of firing.** Its context window
+   treats the words "not" and "safe" as evidence that a warning is already
+   present, so "Chocolate is a safe treat for your dog" passes unflagged.
+4. **Retrieval is dead on small corpora.** IDF is `log(N / (1 + df))`, which is
+   at most zero when a term appears in nearly every document, so a corpus of one
+   or two documents never returns a hit.
 
-## What This Project Says About Me as an AI Engineer
+Gaps 1 and 3 are the ones that matter: both cause the safety layer to fail
+quietly rather than loudly.
 
-This project demonstrates my ability to design and implement a complete AI system end-to-end: from OOP backend design to agentic orchestration, from safety engineering to systematic testing. I focused on practical engineering decisions — choosing TF-IDF over embeddings for a small knowledge base, building deterministic guardrails for safety-critical checks, and designing a graceful fallback system that works without API access. These are the kinds of trade-offs that matter in production AI systems, where reliability and maintainability outweigh algorithmic sophistication.
+## Evaluation
+
+**There is no quantitative evaluation yet.** No measured intent accuracy, no
+retrieval recall, no guardrail false-positive rate. This is the most significant
+gap in the project, and the claims above about retrieval and guardrail quality
+should be read as design intent rather than measured behaviour.
+
+What does exist is a deterministic test suite: 110 tests across 7 modules at 74%
+line coverage, with the domain layer at 98% and guardrails at 96%. The LLM
+request paths are entirely uncovered — they have no fake client to test against.
+
+## Misuse Risks
+
+**Substituting the agent for a vet.** An owner might act on health advice and
+delay real care. Mitigated by disclaimers on medical topics and the emergency
+override — but see gap 1 above, which currently makes that override fire too
+eagerly.
+
+**Acting on a hallucinated food recommendation.** In LLM mode the model could
+suggest something harmful. Mitigated by the post-response toxic food scan, which
+knows 18 substances across 4 species — but see gap 3, which lets some phrasings
+through.
+
+**Assuming the knowledge base is complete.** Every retrieval response carries a
+scope disclaimer, and a confidence score is shown in the UI so low-certainty
+answers are visible.
+
+## Origins
+
+Built on a course starter project (a Streamlit CRUD app with four OOP classes),
+which supplied roughly 200 lines. The agent, tool layer, retrieval, guardrails,
+logging, CLI, and test suite were added afterwards. Commit history preserves the
+attribution.

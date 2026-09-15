@@ -1,164 +1,196 @@
-# PawPal+ Agent — AI-Powered Pet Care Assistant
+# PawPal+ Agent
 
-## Summary
+A pet care scheduling assistant you talk to in plain language. It manages pets
+and recurring care tasks, spots scheduling conflicts, finds open time slots, and
+answers husbandry questions from a local knowledge base — with a deterministic
+safety layer wrapped around every response.
 
-PawPal+ Agent extends the original [PawPal+](https://github.com/zongyang078/ai110-module2show-pawpal-starter) pet care management system (Module 2 Show project) into a full **agentic AI system**. The original project was a Streamlit app with four OOP classes (Task, Pet, Owner, Scheduler) that let users manually manage pet care schedules through forms and buttons.
+```
+$ python cli.py ask "Add Mochi, a dog"
+Added Mochi the dog.
 
-This extension adds a **natural language chat interface** powered by an AI Agent that can autonomously plan actions, call tools, retrieve pet care knowledge, and self-check its responses for safety. Users simply type what they need — "Schedule a daily walk for Mochi at 7:30am" or "How often should I bathe my dog?" — and the Agent handles the rest.
+$ python cli.py ask "Schedule a walk for Mochi at 07:30 daily"
+Added task 'Morning walk' for Mochi at 07:30.
 
-## Architecture Overview
+$ python cli.py schedule
+Today's schedule (2026-09-14):
+  1. 🔴 07:30 - Morning walk (30min, daily, pending) [Mochi]
 
-The system follows a **ReAct (Reason-Act-Observe)** loop architecture:
+$ python cli.py ask --trace "How often should I bathe my dog?"
+  trace:
+    search_care_info({'query': 'How often should I bathe my dog?'})
+    confidence: 0.70
+Here is what I found in the pet care knowledge base:
+
+  [GROOMING] Dog grooming basics
+  Brushing frequency depends on coat type: short coats weekly [...]
+
+$ python cli.py ask "My dog is not breathing!"
+  ! Emergency keyword detected: 'not breathing'
+This sounds like it could be a pet emergency. Please contact your
+veterinarian or an emergency animal hospital immediately. [...]
+```
+
+## Architecture
 
 ![System Architecture](assets/architecture.svg)
 
-**Components:**
+The agent is an orchestration layer over its own tools. A turn runs as:
+intent detection → pre-flight guardrails → tool planning and execution →
+post-flight guardrails → confidence scoring → logging.
 
-- **Streamlit Chat UI** (`app.py`) — Chat interface where users interact with the Agent in natural language. Displays tool call transparency and confidence scores.
-- **AI Agent** (`agent.py`) — Core reasoning engine. Detects intent from user messages, plans which tools to call, executes them, and self-checks the response. Operates in two modes: LLM-powered (OpenAI/Anthropic API) or rule-based fallback (no API needed).
-- **Tool Registry** (`tools.py`) — Wraps all PawPal+ backend functions as callable tools with standardized schemas. Eight tools available: `add_pet`, `add_task`, `complete_task`, `get_schedule`, `get_pet_tasks`, `detect_conflicts`, `suggest_time_slot`, `search_care_info`.
-- **Knowledge Base** (`knowledge_base.py`) — Pet care RAG system with TF-IDF retrieval (stop word filtering, suffix stemming, title boosting, species relevance scoring). Loads 14 documents from external text files in the `knowledge/` directory, covering feeding, health, grooming, training, and general care for dogs, cats, birds, and hamsters. New documents can be added by dropping `.txt` files into the directory.
-- **Guardrails** (`guardrails.py`) — Safety layer that runs before and after every response. Detects emergencies (overrides response with vet referral), flags toxic food mentions, adds medical disclaimers, and computes confidence scores.
-- **Logger** (`logger.py`) — Records the full reasoning chain for every interaction: user input, detected intent, tool calls with arguments/results, guardrail checks, and final response. Supports JSON export for analysis.
-- **PawPal+ Backend** (`pawpal_system.py`) — Original OOP layer (Task, Pet, Owner, Scheduler dataclasses) with scheduling algorithms, conflict detection, JSON persistence, and the next-available-slot finder.
+| Module | Role |
+|---|---|
+| [`agent.py`](agent.py) | Reasoning loop. Plans and executes tools, self-checks the result. Two modes: LLM function calling, or keyword dispatch when no API key is set. |
+| [`tools.py`](tools.py) | Eight tools as JSON Schema function definitions: `add_pet`, `add_task`, `complete_task`, `get_schedule`, `get_pet_tasks`, `detect_conflicts`, `suggest_time_slot`, `search_care_info`. |
+| [`knowledge_base.py`](knowledge_base.py) | Retrieval over 14 documents in [`knowledge/`](knowledge/). Hand-rolled TF-IDF with stop words, suffix stemming, 3× title boost, and species weighting. Drop in a `.txt` file to extend it. |
+| [`guardrails.py`](guardrails.py) | Safety checks before and after each response: emergency override, medical disclaimer, toxic food scan, confidence score. |
+| [`logger.py`](logger.py) | Records the full chain per interaction — input, intent, tool calls with arguments and results, guardrail outcome, response. Exports to JSON. |
+| [`pawpal_system.py`](pawpal_system.py) | Domain layer: `Task`, `Pet`, `Owner`, `Scheduler`. Priority scheduling, recurrence, conflict detection, duration-aware slot finding, JSON persistence. |
+| [`cli.py`](cli.py) | Terminal entry point. |
+| [`app.py`](app.py) | Streamlit chat UI, with tool-call and confidence transparency. |
 
-**Data flow:**
-1. User types a message in the chat
-2. Agent detects intent via keyword matching (rule-based) or LLM reasoning
-3. Pre-flight guardrails check for emergencies
-4. Agent selects and executes relevant tools
-5. Post-flight guardrails check the response for safety issues
-6. Logger records the full interaction chain
-7. Response displayed with transparency (tool calls, confidence, warnings)
+The LLM layer targets OpenAI (`gpt-4o-mini`) and Anthropic
+(`claude-sonnet-4-20250514`) through their native tool-calling APIs. Both are
+optional: with no key configured the agent runs entirely on keyword dispatch, so
+the system works offline and the test suite never touches the network.
 
-## Setup Instructions
-
-### Prerequisites
-
-- Python 3.10+
-- (Optional) OpenAI or Anthropic API key for LLM-powered mode
-
-### Installation
+## Quickstart
 
 ```bash
-# Clone the repository
-git clone https://github.com/zongyang078/pawpal-agent.git
-cd pawpal-agent
-
-# Create virtual environment
-python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
-
-# Install dependencies
+python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### Running the App
-
-**Rule-based mode (no API key needed):**
+Optionally export `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` to enable LLM mode.
 
 ```bash
-streamlit run app.py
+python cli.py seed                    # write a sample owner, 2 pets, 6 tasks
+python cli.py schedule                # today's plan, plus any conflicts
+python cli.py pets                    # registered pets and pending counts
+python cli.py ask "..." [--trace]     # one question, optionally with the tool trace
+python cli.py chat [--trace]          # interactive session
+python cli.py --data demo.json ...    # use a different state file
+
+streamlit run app.py                  # chat UI
 ```
 
-**LLM-powered mode (recommended):**
+## Testing
 
 ```bash
-# Option 1: OpenAI
-export OPENAI_API_KEY="your-key-here"
-streamlit run app.py
-
-# Option 2: Anthropic
-export ANTHROPIC_API_KEY="your-key-here"
-streamlit run app.py
+python -m pytest tests/ -q
 ```
 
-### Running Tests
+110 tests across 7 modules, no network access required:
 
-```bash
-python -m pytest tests/test_pawpal_agent.py -v
-```
-
-## Sample Interactions
-
-### Example 1: Adding a pet and scheduling tasks
-
-![Demo: Add pet and schedule tasks](assets/demo_chat.png)
-
-### Example 2: Today's schedule
-
-![Demo: Today's schedule](assets/demo_schedule.png)
-
-### Example 3: Pet care knowledge retrieval (RAG)
-
-![Demo: RAG knowledge retrieval](assets/demo_rag.png)
-
-### Example 4: Emergency detection (guardrail override)
-
-![Demo: Emergency detection](assets/demo_emergency.png)
-
-### Sidebar: Status panel
-
-![Demo: Sidebar status](assets/demo_sidebar.png)
-
-## Design Decisions
-
-**Why Agentic Workflow over RAG-only or Fine-tuning?** The original PawPal+ already had multiple functional modules (scheduling, conflict detection, persistence). An agentic architecture lets the AI orchestrate these existing capabilities through tool calling, which is more powerful than just adding a knowledge lookup. It also makes the system extensible — adding a new capability means registering a new tool, not retraining a model.
-
-**Why dual-mode (LLM + rule-based)?** Not everyone has API access, and the assignment requires the project to "run correctly and reproducibly." The rule-based fallback ensures the system works out of the box while the LLM mode provides superior natural language understanding.
-
-**Why TF-IDF for retrieval instead of embeddings?** For a knowledge base of 14 documents, TF-IDF with stop word filtering, suffix stemming, title boosting, and species relevance scoring is fast, interpretable, and requires no external dependencies or API calls. Embedding-based retrieval would be overkill here and add complexity without meaningful improvement at this scale.
-
-**Why keyword-based guardrails instead of LLM-based safety?** Guardrails need to be fast, deterministic, and always-on. A keyword-based toxic food checker will never miss "chocolate" regardless of how it's phrased, while an LLM might occasionally let it through. For safety-critical checks, deterministic rules are more reliable.
-
-## Testing Summary
-
-The test suite contains **58 tests** across 7 categories:
-
-| Category | Tests | Status |
+| Module | Tests | Under test |
 |---|---|---|
-| Task dataclass logic | 6 | All passing |
-| Pet management | 4 | All passing |
-| Scheduler algorithms | 6 | All passing |
-| Tool execution | 9 | All passing |
-| Guardrails & safety | 10 | All passing |
-| Knowledge base retrieval | 5 | All passing |
-| Agent intent + end-to-end | 14 | All passing |
-| Logger | 4 | All passing |
+| [`test_domain.py`](tests/test_domain.py) | 33 | Task, Pet, Owner, Scheduler, slot finder, persistence |
+| [`test_agent.py`](tests/test_agent.py) | 17 | Intent detection, rule-based end-to-end flows |
+| [`test_guardrails.py`](tests/test_guardrails.py) | 14 | Toxic food, emergency, referral, confidence |
+| [`test_tools.py`](tests/test_tools.py) | 14 | Tool schemas and dispatch |
+| [`test_knowledge_base.py`](tests/test_knowledge_base.py) | 13 | Retrieval, corpus loading |
+| [`test_cli.py`](tests/test_cli.py) | 11 | Every subcommand, exit codes, stream routing |
+| [`test_logger.py`](tests/test_logger.py) | 8 | Recording, summary, JSON export |
 
-**Key findings from testing:**
+Line coverage is 74%:
 
-- The rule-based intent detector correctly identifies 7 out of 8 intent categories on simple inputs, but struggles with ambiguous messages (e.g., "Can you help with Mochi?" could be schedule or care question). The LLM mode handles these correctly.
-- Guardrails successfully block all tested toxic food recommendations and detect all emergency keywords. Confidence scoring averaged 0.65 for successful tool executions and 0.3 for no-tool interactions.
-- The knowledge base returns relevant results for all tested pet care queries and correctly returns "no results" for off-topic queries.
+```
+pawpal_system.py   98%    knowledge_base.py  96%    guardrails.py  96%
+logger.py          88%    tools.py           84%    cli.py         82%
+agent.py           54%    app.py              0%
+```
 
-## Reflection
+The gap in `agent.py` is the two LLM request paths, which have no fake client to
+test against. That is the next thing to fix, and it is the reason the LLM mode
+is described here as implemented rather than as verified.
 
-Building this project taught me how agentic AI systems work at an architectural level — the ReAct loop isn't just a buzzword but a concrete pattern of reasoning, acting, and observing that maps cleanly to software engineering concepts like the command pattern and middleware chains. The hardest part was designing the intent detection and parameter extraction for the rule-based mode; it made me appreciate how much work LLMs do in understanding natural language compared to regex-based approaches.
+Four tests are pinned as strict `xfail` — known defects, documented rather than
+deleted. See [Known defects](#known-defects).
 
-The guardrails module was the most eye-opening part. Writing deterministic safety checks forced me to think through failure modes I wouldn't have considered — what happens if the AI recommends chocolate to a dog owner? What if someone describes an emergency and the AI tries to schedule a task instead? These aren't hypothetical; they're the kinds of failures that make AI systems dangerous in practice.
+## Design decisions
 
-## Project Structure
+**Agentic orchestration over RAG-only.** The scheduling backend already had
+real capabilities — priority sorting, recurrence, conflict detection, slot
+finding. Wrapping those as tools lets the model compose them, and adding a
+capability means registering a tool rather than changing a prompt. A
+retrieval-only design could answer questions but could not *do* anything.
+
+**Dual mode, LLM and rule-based.** The fallback is not a toy: it handles the
+eight intent categories directly, which makes the system runnable with no
+credentials and makes the whole test suite hermetic. It buys reproducibility at
+the cost of recall on indirect phrasing — a trade-off that shows up plainly in
+the model card's limitations.
+
+**TF-IDF over embeddings.** At 14 documents, a scored keyword match with title
+boosting and species weighting is fast, interpretable, and dependency-free. The
+honest version of this decision: it is right at this corpus size and would be
+wrong at 10× it, where the lack of chunking and vector scoring would start to
+cost real accuracy.
+
+**Keyword guardrails over an LLM judge.** Safety checks should be fast,
+always-on, and identical every time. A table lookup for "chocolate" cannot be
+prompted out of firing. The cost is brittleness at the edges, and the defects
+below are exactly that cost showing up.
+
+## Known defects
+
+Found while restructuring the test suite; each has a strict `xfail` test so it
+cannot be quietly forgotten.
+
+1. **A medical keyword suppresses the answer.** The pre-flight check runs with
+   an empty response string, so a vet-referral keyword makes the modified
+   response non-empty and the agent treats it as an emergency override. "My dog
+   has a lump, how often should I feed him?" returns the disclaimer and nothing
+   else, at a reported confidence of 1.0.
+   ([`agent.py:127`](agent.py#L127))
+2. **Keyword tables match bare substrings.** "plump" contains "lump";
+   "swallowed his food" contains "swallowed". ([`guardrails.py:31`](guardrails.py#L31))
+3. **The toxic food check can be talked out of firing.** Its context window
+   counts "not" and "safe" as evidence a warning is already present, so
+   "Chocolate is a safe treat for your dog" passes clean.
+   ([`guardrails.py:75`](guardrails.py#L75))
+4. **Retrieval is dead on small corpora.** IDF is `log(N / (1 + df))`, which is
+   ≤ 0 once a term appears in nearly every document, so a one- or two-document
+   corpus never returns a hit. The earlier test suite missed this because it
+   only ever exercised the full 14-document corpus.
+   ([`knowledge_base.py:267`](knowledge_base.py#L267))
+
+Also outstanding: two near-duplicate provider methods that should be one loop
+behind an adapter; tool results returned as strings, so the agent cannot branch
+on failure; no timeouts or retries on API calls; magic numbers in place of
+configuration; and no quantitative evaluation of intent accuracy, retrieval
+recall, or guardrail false-positive rate. The last of those is the biggest gap —
+see the model card's Evaluation section.
+
+## Screenshots
+
+| | |
+|---|---|
+| ![Chat](assets/demo_chat.png) | ![Schedule](assets/demo_schedule.png) |
+| ![Retrieval](assets/demo_rag.png) | ![Emergency](assets/demo_emergency.png) |
+
+## Project structure
 
 ```
 pawpal-agent/
-├── pawpal_system.py      # Original PawPal+ backend (Task, Pet, Owner, Scheduler)
-├── agent.py              # AI Agent with ReAct loop
-├── tools.py              # Tool registry (8 tools)
-├── knowledge_base.py     # Pet care RAG with TF-IDF retrieval
-├── guardrails.py         # Safety checks (toxic food, emergency, vet referral)
-├── logger.py             # Interaction logging system
+├── agent.py              # reasoning loop, intent detection
+├── tools.py              # tool schemas and dispatch
+├── knowledge_base.py     # TF-IDF retrieval
+├── guardrails.py         # safety checks
+├── logger.py             # interaction logging
+├── pawpal_system.py      # domain layer
+├── cli.py                # terminal entry point
 ├── app.py                # Streamlit chat UI
-├── main.py               # Original CLI demo (from base project)
-├── tests/
-│   ├── test_pawpal.py        # Original PawPal+ tests (from base project)
-│   └── test_pawpal_agent.py  # 58 Agent tests across 7 categories
-├── knowledge/            # 14 pet care documents (.txt files)
-├── assets/               # Architecture diagram and demo screenshots
-├── logs/                 # Agent interaction logs (auto-created)
-├── reflection.md         # Original project reflection (from base project)
-├── uml_final.mermaid     # Original UML class diagram (from base project)
-├── model_card.md         # Reflection and ethics
-├── requirements.txt
-└── .gitignore
+├── knowledge/            # 14 care documents (.txt)
+├── tests/                # 110 tests across 7 modules
+├── assets/               # architecture diagram, screenshots
+├── model_card.md         # intended use, limitations, safety gaps
+└── requirements.txt
 ```
+
+## Origins
+
+Built on a course starter project — a Streamlit CRUD app with four OOP classes,
+roughly 200 lines. Everything after that (agent, tools, retrieval, guardrails,
+logging, CLI, tests) was added on top. Commit history preserves the attribution.
