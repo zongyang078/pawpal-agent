@@ -80,25 +80,32 @@ fast, always-on, and produce the same answer every time.
 | Vet referral | Around the response | Appends a medical disclaimer |
 | Toxic food | After the response | Appends a safety warning if an unwarned toxic item appears |
 
-**Gaps found during testing, not yet fixed.** These are pinned as strict `xfail`
-tests so they cannot be forgotten:
+**Gaps found during testing, since fixed.** Three of the four defects that
+restructuring the test suite surfaced were in this layer, and two of them made
+the safety layer fail quietly rather than loudly:
 
-1. **A medical keyword suppresses the answer entirely.** The pre-flight check is
-   called with an empty response string, so a vet-referral keyword makes the
-   modified response non-empty and the agent mistakes it for an emergency
-   override. Asking "my dog has a lump, how often should I feed him?" returns
-   the disclaimer and nothing else — at a reported confidence of 1.0.
-2. **Keyword tables match bare substrings.** "plump" contains "lump", and
-   "swallowed his food" contains "swallowed", so both trigger false positives.
-3. **The toxic food check can be talked out of firing.** Its context window
-   treats the words "not" and "safe" as evidence that a warning is already
-   present, so "Chocolate is a safe treat for your dog" passes unflagged.
-4. **Retrieval is dead on small corpora.** IDF is `log(N / (1 + df))`, which is
-   at most zero when a term appears in nearly every document, so a corpus of one
-   or two documents never returns a hit.
+1. **A medical keyword suppressed the answer entirely.** The pre-flight stage
+   ran the full pipeline against an empty response, so a vet-referral keyword
+   produced a non-empty modified response that the agent read as an emergency
+   override — the user got the disclaimer alone, at confidence 1.0. Pre-flight
+   now runs the emergency check only.
+2. **Keyword tables matched bare substrings** ("plump" → "lump"). Now anchored
+   on word boundaries.
+3. **The toxic food check could be talked out of firing** — it counted "not"
+   and "safe" as existing warnings, passing "Chocolate is a safe treat for your
+   dog". Warning language is now an explicit pattern, and every mention of an
+   item must carry its own warning.
+4. **Retrieval returned nothing on corpora below three documents**, because
+   unsmoothed IDF went non-positive. Now smoothed.
 
-Gaps 1 and 3 are the ones that matter: both cause the safety layer to fail
-quietly rather than loudly.
+Each has a regression test named after the failure it prevents.
+
+**The remaining limit is the approach itself.** Defect 2 showed it: "swallowed"
+is what a dog does at every meal, so no boundary anchoring rescues "swallowed
+his food quickly" — it needed a hand-written exclusion for ordinary food. A
+keyword table cannot express much more nuance than that. Emergency detection
+therefore trades recall for precision in a way a trained classifier would not
+have to, and the tables remain English-only.
 
 ## Evaluation
 
@@ -107,21 +114,22 @@ retrieval recall, no guardrail false-positive rate. This is the most significant
 gap in the project, and the claims above about retrieval and guardrail quality
 should be read as design intent rather than measured behaviour.
 
-What does exist is a deterministic test suite: 110 tests across 7 modules at 74%
+What does exist is a deterministic test suite: 115 tests across 7 modules at 74%
 line coverage, with the domain layer at 98% and guardrails at 96%. The LLM
 request paths are entirely uncovered — they have no fake client to test against.
 
 ## Misuse Risks
 
 **Substituting the agent for a vet.** An owner might act on health advice and
-delay real care. Mitigated by disclaimers on medical topics and the emergency
-override — but see gap 1 above, which currently makes that override fire too
-eagerly.
+delay real care. Mitigated by a disclaimer on medical topics and by the
+emergency override, which replaces the response outright rather than annotating
+it. Detection is keyword-based, so an emergency described in wording the tables
+do not cover is answered as an ordinary question.
 
 **Acting on a hallucinated food recommendation.** In LLM mode the model could
 suggest something harmful. Mitigated by the post-response toxic food scan, which
-knows 18 substances across 4 species — but see gap 3, which lets some phrasings
-through.
+knows 18 substances across 4 species and requires every mention to be warned
+about. It covers only those 18 substances, spelled in English.
 
 **Assuming the knowledge base is complete.** Every retrieval response carries a
 scope disclaimer, and a confidence score is shown in the UI so low-certainty

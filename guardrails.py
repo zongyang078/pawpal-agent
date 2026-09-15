@@ -5,6 +5,7 @@ Validates Agent responses and tool calls to ensure safety and reliability.
 Includes toxic food detection, confidence scoring, and medical disclaimer injection.
 """
 
+import re
 from dataclasses import dataclass
 
 
@@ -30,9 +31,20 @@ TOXIC_FOODS: dict[str, list[str]] = {
 # Keywords that suggest a medical emergency
 EMERGENCY_KEYWORDS = [
     "seizure", "seizures", "not breathing", "unconscious", "bleeding heavily",
-    "poisoned", "ate poison", "ate chocolate", "swallowed", "choking",
+    "poisoned", "ate poison", "ate chocolate", "choking",
     "collapsed", "paralyzed", "not moving", "hit by car", "broken bone",
 ]
+
+# Keywords that a word match alone gets wrong. "swallowed" is what a dog does
+# at every meal, so a bare match fires on "swallowed his food quickly"; it only
+# signals an emergency when the object is not ordinary food or water. Keyword
+# tables cannot express much more nuance than this -- see the model card.
+EMERGENCY_PATTERNS = {
+    "swallowed": (
+        r"\bswallowed\b(?!\s+(?:\w+\s+)?"
+        r"(?:food|meal|kibble|dinner|breakfast|supper|water|treats?)\b)"
+    ),
+}
 
 # Keywords that suggest the user needs vet advice, not AI advice
 VET_REFERRAL_KEYWORDS = [
@@ -41,6 +53,46 @@ VET_REFERRAL_KEYWORDS = [
     "diarrhea for days", "eye infection", "ear infection", "skin rash",
     "breathing problems", "heart", "diabetes", "kidney",
 ]
+
+
+def _compile_keywords(keywords: list[str]) -> list[tuple[str, re.Pattern]]:
+    """Pair each keyword with a word-boundary-anchored pattern.
+
+    Bare substring matching produced false positives that a guardrail cannot
+    afford: "plump" contains "lump", and "swallowed his food" contains
+    "swallowed". Anchoring on \\b means a keyword only matches a whole word.
+    """
+    return [(kw, re.compile(rf"\b{re.escape(kw)}\b")) for kw in keywords]
+
+
+_EMERGENCY_PATTERNS = _compile_keywords(EMERGENCY_KEYWORDS) + [
+    (label, re.compile(pattern)) for label, pattern in EMERGENCY_PATTERNS.items()
+]
+_VET_REFERRAL_PATTERNS = _compile_keywords(VET_REFERRAL_KEYWORDS)
+_TOXIC_PATTERNS = {
+    species: _compile_keywords(items) for species, items in TOXIC_FOODS.items()
+}
+
+# Language that counts as already warning the reader off a toxic item. Matched
+# as stem prefixes so "toxic" also covers "toxicity" and "harm" covers
+# "harmful". Deliberately excludes bare "not" and bare "safe": those let
+# "Chocolate is a safe treat for your dog" read as a warning.
+_WARNING_RE = re.compile(
+    r"\b(?:toxic|poison|danger|harm|lethal|fatal|deadly|avoid|never|unsafe"
+    r"|not\s+safe|do\s+not|don't|doesn't|should\s+not|shouldn't"
+    r"|keep\s+away|stay\s+away|can\s+kill|off[-\s]limits)"
+)
+
+# How much text on either side of a toxic item counts as its context.
+_WARNING_WINDOW_CHARS = 80
+
+# A response that already refers the reader to a vet does not need the
+# disclaimer appended. Knowledge base articles carry their own closing note, so
+# without this check a medical question gets two disclaimers back to back.
+_EXISTING_REFERRAL_RE = re.compile(
+    r"\b(?:consult|see|contact|call|visit|ask)\b[^.!?]{0,40}"
+    r"\b(?:vet|vets|veterinarian|veterinarians|veterinary)\b"
+)
 
 
 @dataclass
@@ -65,33 +117,33 @@ def check_toxic_food_mention(response: str, species: str | None = None) -> Guard
     response_lower = response.lower()
     warnings = []
 
-    species_to_check = [species] if species else list(TOXIC_FOODS.keys())
+    species_to_check = [species] if species else list(_TOXIC_PATTERNS.keys())
 
     for sp in species_to_check:
-        for item in TOXIC_FOODS.get(sp, []):
-            if item in response_lower:
-                # Check ALL occurrences of the toxic item in the response.
-                # If ANY occurrence is near a warning word, consider it warned.
-                danger_words = ["toxic", "avoid", "never", "dangerous", "harmful",
-                                "do not", "don't", "not", "safe"]
-                already_warned = False
-                start = 0
-                while True:
-                    idx = response_lower.find(item, start)
-                    if idx == -1:
-                        break
-                    # Check a 100-char window around this occurrence
-                    window = response_lower[max(0, idx - 80):idx + len(item) + 80]
-                    if any(dw in window for dw in danger_words):
-                        already_warned = True
-                        break
-                    start = idx + 1
+        for item, pattern in _TOXIC_PATTERNS.get(sp, []):
+            matches = list(pattern.finditer(response_lower))
+            if not matches:
+                continue
 
-                if not already_warned:
-                    warnings.append(
-                        f"WARNING: '{item}' is toxic to {sp}s. "
-                        f"The response should explicitly warn against it."
-                    )
+            # Every mention has to carry a warning in its own window. Accepting
+            # the item as soon as *one* mention is warned lets a long response
+            # warn about chocolate up front and then recommend it further down,
+            # past the window -- which is the shape a multi-document retrieval
+            # answer actually has.
+            unwarned = [
+                m for m in matches
+                if not _WARNING_RE.search(
+                    response_lower[
+                        max(0, m.start() - _WARNING_WINDOW_CHARS):
+                        m.end() + _WARNING_WINDOW_CHARS
+                    ]
+                )
+            ]
+            if unwarned:
+                warnings.append(
+                    f"WARNING: '{item}' is toxic to {sp}s. "
+                    f"The response should explicitly warn against it."
+                )
 
     return GuardrailResult(passed=len(warnings) == 0, warnings=warnings)
 
@@ -105,8 +157,8 @@ def check_emergency(user_message: str) -> GuardrailResult:
     message_lower = user_message.lower()
     warnings = []
 
-    for keyword in EMERGENCY_KEYWORDS:
-        if keyword in message_lower:
+    for keyword, pattern in _EMERGENCY_PATTERNS:
+        if pattern.search(message_lower):
             warnings.append(f"Emergency keyword detected: '{keyword}'")
 
     if warnings:
@@ -133,8 +185,8 @@ def check_vet_referral(user_message: str) -> GuardrailResult:
     message_lower = user_message.lower()
     warnings = []
 
-    for keyword in VET_REFERRAL_KEYWORDS:
-        if keyword in message_lower:
+    for keyword, pattern in _VET_REFERRAL_PATTERNS:
+        if pattern.search(message_lower):
             warnings.append(f"Medical topic detected: '{keyword}'")
 
     if warnings:
@@ -221,7 +273,7 @@ def run_all_checks(
 
     # Build final result
     modified = None
-    if vet_check.warnings:
+    if vet_check.warnings and not _EXISTING_REFERRAL_RE.search(agent_response.lower()):
         disclaimer = (
             "\n\nNote: This question touches on a medical topic. "
             "The information above is for general guidance only. "

@@ -27,6 +27,20 @@ class TestToxicFood:
         assert not check_toxic_food_mention("Try feeding raw eggs.", "cat").passed
         assert check_toxic_food_mention("Try feeding raw eggs.", "dog").passed
 
+    def test_safe_is_not_treated_as_a_warning(self):
+        """"safe" used approvingly must not read as a warning; "not safe" must."""
+        assert not check_toxic_food_mention("Chocolate is a safe treat for dogs.", "dog").passed
+        assert check_toxic_food_mention("Chocolate is not safe for dogs.", "dog").passed
+
+    def test_every_mention_needs_its_own_warning(self):
+        """Warning once up front must not license an unwarned mention later."""
+        response = (
+            "Chocolate is toxic to dogs and should never be given. "
+            + "Dogs need daily walks, fresh water, and plenty of play time. " * 3
+            + "For a special reward, a small piece of chocolate makes a nice treat."
+        )
+        assert not check_toxic_food_mention(response, "dog").passed
+
 
 class TestEmergency:
     """Tests for emergency keyword detection."""
@@ -104,3 +118,16 @@ class TestRunAllChecks:
         assert result.modified_response is not None
         assert result.modified_response.startswith("Here is some general guidance.")
         assert "veterinarian" in result.modified_response.lower()
+
+    def test_disclaimer_is_not_duplicated(self):
+        """Knowledge base articles close with their own referral already."""
+        result = run_all_checks(
+            user_message="My cat has blood in stool",
+            agent_response=(
+                "Watch for changes in litter box habits. Note: this information is "
+                "for general guidance only. For specific medical concerns, always "
+                "consult a veterinarian."
+            ),
+            tool_results=["Some knowledge base content"],
+        )
+        assert result.modified_response is None

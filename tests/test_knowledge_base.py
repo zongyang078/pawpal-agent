@@ -1,19 +1,6 @@
 """Tests for the TF-IDF pet care knowledge base."""
 
-import pytest
-
 from knowledge_base import Document, KnowledgeBase
-
-
-SMALL_CORPUS_IDF = pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "IDF is log(N / (1 + df)), which is <= 0 whenever df >= N - 1. On a corpus of "
-        "one or two documents every term scores <= 0 and search()'s `score > 0` filter "
-        "discards everything, so the KB can never return a hit. Needs the smoothed form "
-        "log((1 + N) / (1 + df)) + 1."
-    ),
-)
 
 
 class TestSearch:
@@ -62,15 +49,24 @@ class TestCustomCorpus:
         ])
         assert len(kb.documents) == 1
 
-    @SMALL_CORPUS_IDF
     def test_single_document_corpus_is_searchable(self):
+        """Unsmoothed IDF made every term score <= 0 below three documents."""
         kb = KnowledgeBase(documents=[
             Document(title="Axolotl care", content="Axolotls need cold water.", category="general",
                      species=["axolotl"]),
         ])
         assert "Axolotls need cold water" in kb.search("axolotl")
 
-    @SMALL_CORPUS_IDF
+    def test_idf_is_always_positive(self):
+        """Every term must keep a positive weight, whatever its document frequency."""
+        for n in (1, 2, 3, 14):
+            kb = KnowledgeBase(documents=[
+                Document(title=f"Doc {i}", content="shared term plus unique wording",
+                         category="general", species=["dog"])
+                for i in range(n)
+            ])
+            assert min(kb._idf_cache.values()) > 0, f"non-positive IDF at N={n}"
+
     def test_add_document_reindexes(self):
         kb = KnowledgeBase(documents=[
             Document(title="Axolotl care", content="Axolotls need cold water.", category="general",

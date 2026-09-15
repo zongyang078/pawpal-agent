@@ -7,6 +7,7 @@ arrives with the provider abstraction.
 import pytest
 
 from agent import PawPalAgent
+from guardrails import check_emergency, check_vet_referral
 from pawpal_system import Owner, Pet
 
 
@@ -79,18 +80,10 @@ class TestRuleBasedFlows:
         assert "walk" in response.message.lower()
 
 
-class TestKnownDefects:
-    """Regression tests for defects that are documented but not yet fixed."""
+class TestGuardrailRegressions:
+    """Regressions for guardrail defects found by earlier test restructuring."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "Pre-flight run_all_checks() is called with an empty agent_response, so a "
-            "vet-referral keyword makes modified_response truthy and process() mistakes "
-            "it for an emergency override, returning only the disclaimer."
-        ),
-    )
-    def test_medical_keyword_should_not_suppress_the_answer(self, owner: Owner):
+    def test_medical_keyword_does_not_suppress_the_answer(self, owner: Owner):
         owner.add_pet(Pet(name="Mochi", species="dog"))
         agent = PawPalAgent(owner=owner, use_llm=False)
 
@@ -99,16 +92,25 @@ class TestKnownDefects:
         assert response.tool_calls_made, "the care question should still reach the knowledge base"
         assert "veterinarian" in response.message.lower(), "disclaimer should still be appended"
         assert len(response.message) > 200, "the actual answer should be present too"
+        assert response.confidence < 1.0, "only an emergency override should claim certainty"
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "Keyword tables are matched as bare substrings, so 'plump' contains 'lump' "
-            "and 'swallowed his food' contains 'swallowed'."
-        ),
-    )
-    def test_keywords_should_match_on_word_boundaries(self):
-        from guardrails import check_emergency, check_vet_referral
+    def test_emergency_still_overrides(self, owner: Owner):
+        """Narrowing the pre-flight check must not weaken the emergency path."""
+        owner.add_pet(Pet(name="Mochi", species="dog"))
+        agent = PawPalAgent(owner=owner, use_llm=False)
 
+        response = agent.process("My dog had a seizure! How often should I feed him?")
+
+        assert response.tool_calls_made == [], "no tool should run on an emergency"
+        assert "emergency" in response.message.lower()
+        assert response.confidence == 1.0
+
+    def test_keywords_match_on_word_boundaries(self):
+        """"plump" must not read as "lump", nor "swallowed his food" as a choking."""
         assert not check_vet_referral("Is a plump hamster unhealthy?").warnings
         assert check_emergency("He swallowed his food quickly today").passed
+
+    def test_word_boundaries_do_not_break_real_matches(self):
+        """The narrowing must not cost us true positives."""
+        assert check_vet_referral("My cat has a lump on her side").warnings
+        assert not check_emergency("My dog swallowed a sock!").passed

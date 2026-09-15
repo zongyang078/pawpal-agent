@@ -256,7 +256,14 @@ class KnowledgeBase:
         return word
 
     def _build_idf(self) -> None:
-        """Pre-compute inverse document frequency for all terms."""
+        """Pre-compute inverse document frequency for all terms.
+
+        Uses the smoothed form log((1 + N) / (1 + df)) + 1, which stays >= 1 for
+        every term. The unsmoothed log(N / (1 + df)) goes to zero or negative
+        once a term appears in nearly every document, and search() drops
+        anything scoring <= 0 -- so on a one- or two-document corpus every term
+        was discarded and the knowledge base could never return a hit.
+        """
         n = len(self.documents)
         doc_freq: dict[str, int] = {}
         for doc in self.documents:
@@ -264,7 +271,7 @@ class KnowledgeBase:
             for token in tokens:
                 doc_freq[token] = doc_freq.get(token, 0) + 1
         self._idf_cache = {
-            term: math.log(n / (1 + freq)) for term, freq in doc_freq.items()
+            term: math.log((1 + n) / (1 + freq)) + 1 for term, freq in doc_freq.items()
         }
 
     def _tf_idf_score(self, query_tokens: list[str], doc: Document) -> float:

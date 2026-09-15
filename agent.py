@@ -17,7 +17,7 @@ import os
 import re
 from dataclasses import dataclass, field
 
-from guardrails import compute_confidence, run_all_checks
+from guardrails import check_emergency, compute_confidence, run_all_checks
 from knowledge_base import KnowledgeBase
 from logger import AgentLogger
 from pawpal_system import Owner, Scheduler
@@ -117,26 +117,24 @@ class PawPalAgent:
         log = self.logger.start_interaction(user_message, intent)
 
         try:
-            # Step 2: Pre-check guardrails (emergency detection)
-            pre_check = run_all_checks(
-                user_message=user_message,
-                agent_response="",
-                tool_results=[],
-                pet_species=self._get_current_species(),
-            )
-            if pre_check.modified_response:
-                # Emergency detected — return immediately
+            # Step 2: Pre-flight guardrail. Only the emergency check runs here:
+            # it is the one check that should stop the turn before any tool
+            # does work. The disclaimer and toxic-food checks need a response to
+            # inspect, so they run post-flight via run_all_checks().
+            emergency = check_emergency(user_message)
+            if not emergency.passed:
                 self.logger.log_guardrail(
                     log,
                     passed=False,
-                    warnings=pre_check.warnings,
+                    warnings=emergency.warnings,
+                    confidence=1.0,
                     response_modified=True,
                 )
-                self.logger.log_response(log, pre_check.modified_response)
+                self.logger.log_response(log, emergency.modified_response)
                 return AgentResponse(
-                    message=pre_check.modified_response,
+                    message=emergency.modified_response,
                     confidence=1.0,
-                    guardrail_warnings=pre_check.warnings,
+                    guardrail_warnings=emergency.warnings,
                 )
 
             # Step 3: Plan and execute tools

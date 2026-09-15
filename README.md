@@ -81,15 +81,15 @@ streamlit run app.py                  # chat UI
 python -m pytest tests/ -q
 ```
 
-110 tests across 7 modules, no network access required:
+115 tests across 7 modules, no network access required:
 
 | Module | Tests | Under test |
 |---|---|---|
 | [`test_domain.py`](tests/test_domain.py) | 33 | Task, Pet, Owner, Scheduler, slot finder, persistence |
-| [`test_agent.py`](tests/test_agent.py) | 17 | Intent detection, rule-based end-to-end flows |
-| [`test_guardrails.py`](tests/test_guardrails.py) | 14 | Toxic food, emergency, referral, confidence |
+| [`test_agent.py`](tests/test_agent.py) | 19 | Intent detection, rule-based flows, guardrail regressions |
+| [`test_guardrails.py`](tests/test_guardrails.py) | 16 | Toxic food, emergency, referral, confidence |
 | [`test_tools.py`](tests/test_tools.py) | 14 | Tool schemas and dispatch |
-| [`test_knowledge_base.py`](tests/test_knowledge_base.py) | 13 | Retrieval, corpus loading |
+| [`test_knowledge_base.py`](tests/test_knowledge_base.py) | 14 | Retrieval, IDF weighting, corpus loading |
 | [`test_cli.py`](tests/test_cli.py) | 11 | Every subcommand, exit codes, stream routing |
 | [`test_logger.py`](tests/test_logger.py) | 8 | Recording, summary, JSON export |
 
@@ -98,15 +98,12 @@ Line coverage is 74%:
 ```
 pawpal_system.py   98%    knowledge_base.py  96%    guardrails.py  96%
 logger.py          88%    tools.py           84%    cli.py         82%
-agent.py           54%    app.py              0%
+agent.py           55%    app.py              0%
 ```
 
 The gap in `agent.py` is the two LLM request paths, which have no fake client to
 test against. That is the next thing to fix, and it is the reason the LLM mode
 is described here as implemented rather than as verified.
-
-Four tests are pinned as strict `xfail` — known defects, documented rather than
-deleted. See [Known defects](#known-defects).
 
 ## Design decisions
 
@@ -133,35 +130,49 @@ always-on, and identical every time. A table lookup for "chocolate" cannot be
 prompted out of firing. The cost is brittleness at the edges, and the defects
 below are exactly that cost showing up.
 
-## Known defects
+## Defects found and fixed
 
-Found while restructuring the test suite; each has a strict `xfail` test so it
-cannot be quietly forgotten.
+Restructuring the test suite surfaced four defects, three of them in the safety
+layer. Each now has a regression test named after the failure it prevents.
 
-1. **A medical keyword suppresses the answer.** The pre-flight check runs with
-   an empty response string, so a vet-referral keyword makes the modified
-   response non-empty and the agent treats it as an emergency override. "My dog
-   has a lump, how often should I feed him?" returns the disclaimer and nothing
-   else, at a reported confidence of 1.0.
-   ([`agent.py:127`](agent.py#L127))
-2. **Keyword tables match bare substrings.** "plump" contains "lump";
-   "swallowed his food" contains "swallowed". ([`guardrails.py:31`](guardrails.py#L31))
-3. **The toxic food check can be talked out of firing.** Its context window
-   counts "not" and "safe" as evidence a warning is already present, so
-   "Chocolate is a safe treat for your dog" passes clean.
-   ([`guardrails.py:75`](guardrails.py#L75))
-4. **Retrieval is dead on small corpora.** IDF is `log(N / (1 + df))`, which is
-   ≤ 0 once a term appears in nearly every document, so a one- or two-document
-   corpus never returns a hit. The earlier test suite missed this because it
-   only ever exercised the full 14-document corpus.
-   ([`knowledge_base.py:267`](knowledge_base.py#L267))
+1. **A medical keyword suppressed the answer entirely.** The pre-flight check
+   ran the whole guardrail pipeline against an empty response string, so a
+   vet-referral keyword made the modified response non-empty and the agent read
+   it as an emergency override. "My dog has a lump, how often should I feed
+   him?" returned the disclaimer and nothing else, at a reported confidence of
+   1.0. The pre-flight stage now runs only the emergency check — the one check
+   that should stop a turn before any tool does work.
 
-Also outstanding: two near-duplicate provider methods that should be one loop
-behind an adapter; tool results returned as strings, so the agent cannot branch
-on failure; no timeouts or retries on API calls; magic numbers in place of
-configuration; and no quantitative evaluation of intent accuracy, retrieval
-recall, or guardrail false-positive rate. The last of those is the biggest gap —
-see the model card's Evaluation section.
+2. **Keyword tables matched bare substrings.** "plump" contains "lump", so a
+   hamster weight question read as a possible tumour. All three tables are now
+   anchored on word boundaries.
+
+3. **The toxic food check could be talked out of firing.** Its context window
+   counted the words "not" and "safe" as evidence that a warning was already
+   present, so "Chocolate is a safe treat for your dog" passed clean. Warning
+   language is now an explicit pattern, and *every* mention of a toxic item has
+   to carry its own warning — warning once at the top of a long retrieval answer
+   no longer licenses an unwarned mention further down.
+
+4. **Retrieval was dead on small corpora.** IDF was `log(N / (1 + df))`, which
+   is ≤ 0 once a term appears in nearly every document, and `search()` drops
+   anything scoring ≤ 0 — so a corpus of one or two documents could never
+   return a hit. Now smoothed to `log((1 + N) / (1 + df)) + 1`. The earlier
+   suite missed this because it only ever exercised the full 14-document corpus.
+
+Defect 2 also exposed the ceiling of keyword matching: "swallowed" is what a dog
+does at every meal, so no amount of boundary anchoring fixes "swallowed his food
+quickly". That keyword now carries a negative lookahead for ordinary food, which
+is about as much nuance as a keyword table can express.
+
+## Still outstanding
+
+Two near-duplicate provider methods that should be one loop behind an adapter;
+tool results returned as strings, so the agent cannot branch on failure; no
+timeouts or retries on API calls; magic numbers in place of configuration; and
+no quantitative evaluation of intent accuracy, retrieval recall, or guardrail
+false-positive rate. The last is the biggest gap — see the model card's
+Evaluation section.
 
 ## Screenshots
 
@@ -183,7 +194,7 @@ pawpal-agent/
 ├── cli.py                # terminal entry point
 ├── app.py                # Streamlit chat UI
 ├── knowledge/            # 14 care documents (.txt)
-├── tests/                # 110 tests across 7 modules
+├── tests/                # 115 tests across 7 modules
 ├── assets/               # architecture diagram, screenshots
 ├── model_card.md         # intended use, limitations, safety gaps
 └── requirements.txt
