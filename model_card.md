@@ -13,7 +13,7 @@ falls back to keyword-based dispatch when no API key is configured.
 
 | | |
 |---|---|
-| Reasoning | OpenAI (`gpt-4o-mini`) or Anthropic (`claude-sonnet-4-20250514`), configurable |
+| Reasoning | OpenAI (`gpt-4o-mini`) or Anthropic (`claude-sonnet-4-20250514`), behind one adapter protocol |
 | Fallback | Deterministic keyword intent detection, no API required |
 | Tools | 8, exposed as JSON Schema function definitions |
 | Retrieval | Hand-rolled TF-IDF over 14 documents, no embeddings |
@@ -114,9 +114,12 @@ retrieval recall, no guardrail false-positive rate. This is the most significant
 gap in the project, and the claims above about retrieval and guardrail quality
 should be read as design intent rather than measured behaviour.
 
-What does exist is a deterministic test suite: 115 tests across 7 modules at 74%
-line coverage, with the domain layer at 98% and guardrails at 96%. The LLM
-request paths are entirely uncovered — they have no fake client to test against.
+What does exist is a deterministic test suite: 151 tests across 8 modules at 81%
+line coverage, with guardrails at 99% and the domain layer at 98%. The reasoning
+loop is exercised against a scripted client, so multi-step tool chains, the
+iteration cap, tool failures, and provider outages are covered without a
+network. None of that measures answer *quality* — only that the machinery
+behaves as specified.
 
 ## Misuse Risks
 

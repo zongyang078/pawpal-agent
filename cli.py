@@ -28,19 +28,8 @@ def load_owner(path: str) -> Owner:
 
 
 def build_agent(owner: Owner) -> PawPalAgent:
-    """Wire up an agent, picking a provider from whichever API key is present."""
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        provider, model = "anthropic", "claude-sonnet-4-20250514"
-    else:
-        provider, model = "openai", "gpt-4o-mini"
-    api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")
-    return PawPalAgent(
-        owner=owner,
-        api_key=api_key,
-        api_provider=provider,
-        model=model,
-        use_llm=api_key is not None,
-    )
+    """Wire up an agent. Provider and key come from the environment."""
+    return PawPalAgent(owner=owner)
 
 
 def print_response(agent: PawPalAgent, message: str, *, show_trace: bool) -> None:

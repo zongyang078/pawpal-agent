@@ -12,16 +12,29 @@ Supports both OpenAI and Anthropic APIs (configurable).
 Falls back to a rule-based dispatcher when no API key is available.
 """
 
-import json
 import os
 import re
 from dataclasses import dataclass, field
 
 from guardrails import check_emergency, compute_confidence, run_all_checks
 from knowledge_base import KnowledgeBase
+from llm import (
+    AssistantTurn,
+    LLMClient,
+    LLMError,
+    ToolResult,
+    ToolResultsTurn,
+    Turn,
+    UserTurn,
+    build_client,
+    provider_from_env,
+)
 from logger import AgentLogger
 from pawpal_system import Owner, Scheduler
 from tools import TOOL_DEFINITIONS, execute_tool
+
+# How many model round trips one turn may take before the loop gives up.
+MAX_REACT_ITERATIONS = 3
 
 
 # --- Intent categories ---
@@ -84,20 +97,40 @@ class PawPalAgent:
         self,
         owner: Owner,
         api_key: str | None = None,
-        api_provider: str = "openai",  # 'openai' or 'anthropic'
-        model: str = "gpt-4o-mini",
+        api_provider: str | None = None,  # 'openai' or 'anthropic'
+        model: str | None = None,
         use_llm: bool = True,
+        llm_client: LLMClient | None = None,
+        knowledge_base: KnowledgeBase | None = None,
+        logger: AgentLogger | None = None,
     ):
         self.owner = owner
         self.scheduler = Scheduler(owner=owner)
-        self.knowledge_base = KnowledgeBase()
-        self.logger = AgentLogger()
-        self.api_key = api_key or os.environ.get("OPENAI_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")
-        self.api_provider = api_provider
-        self.model = model
-        self.use_llm = use_llm and self.api_key is not None
+        self.knowledge_base = knowledge_base or KnowledgeBase()
+        self.logger = logger or AgentLogger()
 
-        # Load additional knowledge documents if available
+        # An explicit client wins. Otherwise derive one from the arguments,
+        # falling back to the environment for whichever is not given.
+        if llm_client is not None:
+            self.llm_client = llm_client
+        else:
+            env_provider, env_key = provider_from_env(os.environ)
+            provider = api_provider or env_provider
+            key = api_key or (env_key if api_provider in (None, env_provider) else None)
+            self.llm_client = build_client(provider, key, model)
+
+        self.use_llm = use_llm and self.llm_client is not None
+
+    @property
+    def api_provider(self) -> str:
+        """Name of the active provider, or 'rule-based' when running without one."""
+        if self.llm_client is None:
+            return "rule-based"
+        return type(self.llm_client).__name__.removesuffix("Client").lower()
+
+    @property
+    def model(self) -> str | None:
+        return getattr(self.llm_client, "model", None)
 
     def process(self, user_message: str) -> AgentResponse:
         """Process a user message through the full ReAct loop.
@@ -303,159 +336,59 @@ class PawPalAgent:
     def _llm_reason_and_act(
         self, user_message: str, intent: str
     ) -> tuple[str, list[dict]]:
-        """Use an LLM API to reason about the message and select tools.
+        """Run the ReAct loop against the configured provider.
 
-        Implements a simplified ReAct loop:
-        1. Send user message + tool definitions to LLM
-        2. Parse tool calls from response
-        3. Execute tools and collect results
-        4. Send results back to LLM for final response
+        Send the transcript and tool definitions, execute whatever tools come
+        back, append the results, and repeat until the model answers in text or
+        MAX_REACT_ITERATIONS is reached.
+
+        Any provider failure degrades to rule-based mode rather than surfacing
+        an error: a working answer beats no answer.
         """
         try:
-            if self.api_provider == "openai":
-                return self._openai_react(user_message)
-            elif self.api_provider == "anthropic":
-                return self._anthropic_react(user_message)
-            else:
-                # Fallback to rule-based
-                return self._rule_based_act(user_message, intent)
-        except Exception as e:
-            # If LLM fails, fall back to rule-based
+            return self._react(user_message)
+        except LLMError as e:
             print(f"LLM call failed ({e}), falling back to rule-based mode.")
             return self._rule_based_act(user_message, intent)
 
-    def _openai_react(self, user_message: str) -> tuple[str, list[dict]]:
-        """Execute ReAct loop using OpenAI API with function calling."""
-        import openai
-
-        client = openai.OpenAI(api_key=self.api_key)
-
-        # Build system prompt
+    def _react(self, user_message: str) -> tuple[str, list[dict]]:
+        """The provider-agnostic reasoning loop."""
         system_prompt = self._build_system_prompt()
+        transcript: list[Turn] = [UserTurn(content=user_message)]
+        tool_calls_made: list[dict] = []
 
-        # Build OpenAI-compatible tool definitions
-        oai_tools = [
-            {
-                "type": "function",
-                "function": {
-                    "name": td["name"],
-                    "description": td["description"],
-                    "parameters": td["parameters"],
-                },
-            }
-            for td in TOOL_DEFINITIONS
-        ]
-
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message},
-        ]
-
-        tool_calls_made = []
-
-        # ReAct loop (max 3 iterations to prevent infinite loops)
-        for _ in range(3):
-            response = client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                tools=oai_tools,
-                tool_choice="auto",
+        for _ in range(MAX_REACT_ITERATIONS):
+            response = self.llm_client.complete(
+                system_prompt, transcript, TOOL_DEFINITIONS
             )
 
-            message = response.choices[0].message
+            if not response.tool_calls:
+                return (
+                    response.text or "I'm not sure how to help with that.",
+                    tool_calls_made,
+                )
 
-            if message.tool_calls:
-                messages.append(message)
-                for tc in message.tool_calls:
-                    func_name = tc.function.name
-                    func_args = json.loads(tc.function.arguments)
+            transcript.append(
+                AssistantTurn(text=response.text, tool_calls=response.tool_calls)
+            )
 
-                    result = execute_tool(
-                        func_name,
-                        func_args,
-                        self.owner,
-                        self.scheduler,
-                        self.knowledge_base,
-                    )
+            results = []
+            for call in response.tool_calls:
+                result = execute_tool(
+                    call.name,
+                    call.arguments,
+                    self.owner,
+                    self.scheduler,
+                    self.knowledge_base,
+                )
+                tool_calls_made.append(
+                    {"name": call.name, "args": call.arguments, "result": result}
+                )
+                results.append(ToolResult(id=call.id, content=result))
 
-                    tool_calls_made.append({
-                        "name": func_name,
-                        "args": func_args,
-                        "result": result,
-                    })
+            transcript.append(ToolResultsTurn(results=results))
 
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": result,
-                    })
-            else:
-                # No more tool calls — return the final response
-                return message.content or "I'm not sure how to help with that.", tool_calls_made
-
-        # Max iterations reached
         return "I've completed the requested actions. Is there anything else you need?", tool_calls_made
-
-    def _anthropic_react(self, user_message: str) -> tuple[str, list[dict]]:
-        """Execute ReAct loop using Anthropic API with tool use."""
-        import anthropic
-
-        client = anthropic.Anthropic(api_key=self.api_key)
-
-        system_prompt = self._build_system_prompt()
-
-        # Build Anthropic-compatible tool definitions
-        anth_tools = [
-            {
-                "name": td["name"],
-                "description": td["description"],
-                "input_schema": td["parameters"],
-            }
-            for td in TOOL_DEFINITIONS
-        ]
-
-        messages = [{"role": "user", "content": user_message}]
-        tool_calls_made = []
-
-        for _ in range(3):
-            response = client.messages.create(
-                model=self.model,
-                max_tokens=1024,
-                system=system_prompt,
-                messages=messages,
-                tools=anth_tools,
-            )
-
-            # Check if there are tool use blocks
-            tool_use_blocks = [b for b in response.content if b.type == "tool_use"]
-
-            if tool_use_blocks:
-                messages.append({"role": "assistant", "content": response.content})
-                tool_results = []
-                for tb in tool_use_blocks:
-                    result = execute_tool(
-                        tb.name,
-                        tb.input,
-                        self.owner,
-                        self.scheduler,
-                        self.knowledge_base,
-                    )
-                    tool_calls_made.append({
-                        "name": tb.name,
-                        "args": tb.input,
-                        "result": result,
-                    })
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": tb.id,
-                        "content": result,
-                    })
-                messages.append({"role": "user", "content": tool_results})
-            else:
-                text_blocks = [b.text for b in response.content if b.type == "text"]
-                return " ".join(text_blocks) or "Done.", tool_calls_made
-
-        return "I've completed the requested actions.", tool_calls_made
 
     def _build_system_prompt(self) -> str:
         """Build the system prompt with current state context."""

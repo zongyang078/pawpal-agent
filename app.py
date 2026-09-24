@@ -6,7 +6,6 @@ using natural language. The agent manages pet care schedules,
 answers care questions, and provides proactive safety advice.
 """
 
-import os
 
 import streamlit as st
 
@@ -30,17 +29,8 @@ if "owner" not in st.session_state:
         st.session_state.owner = Owner(name="Pet Parent")
 
 if "agent" not in st.session_state:
-    api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")
-    provider = "anthropic" if os.environ.get("ANTHROPIC_API_KEY") else "openai"
-    model = "claude-sonnet-4-20250514" if provider == "anthropic" else "gpt-4o-mini"
-
-    st.session_state.agent = PawPalAgent(
-        owner=st.session_state.owner,
-        api_key=api_key,
-        api_provider=provider,
-        model=model,
-        use_llm=api_key is not None,
-    )
+    # Provider and key come from the environment; no key means rule-based mode.
+    st.session_state.agent = PawPalAgent(owner=st.session_state.owner)
 
 if "messages" not in st.session_state:
     st.session_state.messages = []

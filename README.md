@@ -42,6 +42,7 @@ post-flight guardrails → confidence scoring → logging.
 | Module | Role |
 |---|---|
 | [`agent.py`](agent.py) | Reasoning loop. Plans and executes tools, self-checks the result. Two modes: LLM function calling, or keyword dispatch when no API key is set. |
+| [`llm.py`](llm.py) | Provider abstraction. One neutral transcript protocol, one adapter per vendor, plus `FakeClient` for tests. The loop in `agent.py` is provider-agnostic. |
 | [`tools.py`](tools.py) | Eight tools as JSON Schema function definitions: `add_pet`, `add_task`, `complete_task`, `get_schedule`, `get_pet_tasks`, `detect_conflicts`, `suggest_time_slot`, `search_care_info`. |
 | [`knowledge_base.py`](knowledge_base.py) | Retrieval over 14 documents in [`knowledge/`](knowledge/). Hand-rolled TF-IDF with stop words, suffix stemming, 3× title boost, and species weighting. Drop in a `.txt` file to extend it. |
 | [`guardrails.py`](guardrails.py) | Safety checks before and after each response: emergency override, medical disclaimer, toxic food scan, confidence score. |
@@ -54,6 +55,20 @@ The LLM layer targets OpenAI (`gpt-4o-mini`) and Anthropic
 (`claude-sonnet-4-20250514`) through their native tool-calling APIs. Both are
 optional: with no key configured the agent runs entirely on keyword dispatch, so
 the system works offline and the test suite never touches the network.
+
+Providers sit behind a single `LLMClient` protocol — the loop hands over a
+neutral transcript and gets back text or tool calls, and each adapter owns the
+translation to its vendor's wire format. Adding a third provider is one adapter,
+not a second copy of the loop. `PawPalAgent` accepts an injected client, which
+is how the loop gets tested without a network:
+
+```python
+agent = PawPalAgent(owner=owner, llm_client=FakeClient([
+    LLMResponse(tool_calls=[ToolCall(id="c1", name="add_pet",
+                                     arguments={"name": "Mochi", "species": "dog"})]),
+    LLMResponse(text="Added Mochi."),
+]))
+```
 
 ## Quickstart
 
@@ -81,29 +96,33 @@ streamlit run app.py                  # chat UI
 python -m pytest tests/ -q
 ```
 
-115 tests across 7 modules, no network access required:
+151 tests across 8 modules, no network access required:
 
 | Module | Tests | Under test |
 |---|---|---|
+| [`test_agent.py`](tests/test_agent.py) | 34 | Intent detection, ReAct loop, guardrail regressions, degradation |
 | [`test_domain.py`](tests/test_domain.py) | 33 | Task, Pet, Owner, Scheduler, slot finder, persistence |
-| [`test_agent.py`](tests/test_agent.py) | 19 | Intent detection, rule-based flows, guardrail regressions |
-| [`test_guardrails.py`](tests/test_guardrails.py) | 16 | Toxic food, emergency, referral, confidence |
+| [`test_llm.py`](tests/test_llm.py) | 20 | Adapter translation both ways, error mapping, client construction |
+| [`test_guardrails.py`](tests/test_guardrails.py) | 17 | Toxic food, emergency, referral, confidence |
 | [`test_tools.py`](tests/test_tools.py) | 14 | Tool schemas and dispatch |
 | [`test_knowledge_base.py`](tests/test_knowledge_base.py) | 14 | Retrieval, IDF weighting, corpus loading |
 | [`test_cli.py`](tests/test_cli.py) | 11 | Every subcommand, exit codes, stream routing |
 | [`test_logger.py`](tests/test_logger.py) | 8 | Recording, summary, JSON export |
 
-Line coverage is 74%:
+Line coverage is 81%:
 
 ```
-pawpal_system.py   98%    knowledge_base.py  96%    guardrails.py  96%
-logger.py          88%    tools.py           84%    cli.py         82%
-agent.py           55%    app.py              0%
+guardrails.py      99%    pawpal_system.py   98%    knowledge_base.py  96%
+llm.py             94%    logger.py          88%    tools.py           84%
+cli.py             83%    agent.py           74%    app.py              0%
 ```
 
-The gap in `agent.py` is the two LLM request paths, which have no fake client to
-test against. That is the next thing to fix, and it is the reason the LLM mode
-is described here as implemented rather than as verified.
+The ReAct loop is covered against `FakeClient`: multi-step tool chains, parallel
+calls in one reply, the iteration cap, tool failures coming back as
+observations, and the fallback to rule-based mode when a provider raises. What
+remains uncovered in `agent.py` is the rule-based parameter extraction — the
+`_extract_*` and `_guess_*` helpers, which is also where its remaining defects
+live (see Still outstanding).
 
 ## Design decisions
 
@@ -167,12 +186,15 @@ is about as much nuance as a keyword table can express.
 
 ## Still outstanding
 
-Two near-duplicate provider methods that should be one loop behind an adapter;
-tool results returned as strings, so the agent cannot branch on failure; no
-timeouts or retries on API calls; magic numbers in place of configuration; and
-no quantitative evaluation of intent accuracy, retrieval recall, or guardrail
-false-positive rate. The last is the biggest gap — see the model card's
-Evaluation section.
+**No quantitative evaluation.** No measured intent accuracy, retrieval recall,
+or guardrail false-positive rate. This is the biggest remaining gap — see the
+model card's Evaluation section.
+
+Also: tool results are returned as strings, so the agent cannot branch on
+failure programmatically; no timeouts, retries, or cost ceilings on provider
+calls; magic numbers in place of configuration; and the rule-based parameter
+extraction is weak — `_extract_pet_info("Yesterday I adopted a dog, Rex")`
+returns "Yesterday" as the name, because it takes the first capitalised word.
 
 ## Screenshots
 
@@ -186,6 +208,7 @@ Evaluation section.
 ```
 pawpal-agent/
 ├── agent.py              # reasoning loop, intent detection
+├── llm.py                # provider adapters + test double
 ├── tools.py              # tool schemas and dispatch
 ├── knowledge_base.py     # TF-IDF retrieval
 ├── guardrails.py         # safety checks
@@ -194,7 +217,7 @@ pawpal-agent/
 ├── cli.py                # terminal entry point
 ├── app.py                # Streamlit chat UI
 ├── knowledge/            # 14 care documents (.txt)
-├── tests/                # 115 tests across 7 modules
+├── tests/                # 151 tests across 8 modules
 ├── assets/               # architecture diagram, screenshots
 ├── model_card.md         # intended use, limitations, safety gaps
 └── requirements.txt
