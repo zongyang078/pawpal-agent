@@ -27,6 +27,7 @@ from llm import (
     Turn,
     UserTurn,
     build_client,
+    model_from_env,
     provider_from_env,
 )
 from logger import AgentLogger
@@ -123,7 +124,9 @@ class PawPalAgent:
             env_provider, env_key = provider_from_env(os.environ)
             provider = api_provider or env_provider
             key = api_key or (env_key if api_provider in (None, env_provider) else None)
-            self.llm_client = build_client(provider, key, model)
+            self.llm_client = build_client(
+                provider, key, model or model_from_env(provider, os.environ)
+            )
 
         self.use_llm = use_llm and self.llm_client is not None
 

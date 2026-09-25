@@ -32,13 +32,20 @@ def build_agent(owner: Owner) -> PawPalAgent:
     return PawPalAgent(owner=owner)
 
 
+def describe_mode(agent: PawPalAgent) -> str:
+    """Which provider and model this agent will actually use."""
+    return f"{agent.api_provider}:{agent.model}" if agent.use_llm else "rule-based"
+
+
 def print_response(agent: PawPalAgent, message: str, *, show_trace: bool) -> None:
     """Run one turn through the agent and print the result."""
     response = agent.process(message)
     print(response.message)
 
-    if show_trace and response.tool_calls_made:
-        print("\n  trace:", file=sys.stderr)
+    if show_trace:
+        # Printed even with no tool calls: it is the quickest way to confirm a
+        # key was picked up, rather than silently running in rule-based mode.
+        print(f"\n  mode: {describe_mode(agent)}", file=sys.stderr)
         for tc in response.tool_calls_made:
             print(f"    {tc['name']}({tc.get('args', {})})", file=sys.stderr)
         print(f"    confidence: {response.confidence:.2f}", file=sys.stderr)
@@ -60,8 +67,7 @@ def cmd_chat(args: argparse.Namespace) -> int:
     """Run an interactive session until EOF or 'exit'."""
     owner = load_owner(args.data)
     agent = build_agent(owner)
-    mode = f"{agent.api_provider}:{agent.model}" if agent.use_llm else "rule-based"
-    print(f"PawPal+ ({mode}). Ctrl-D or 'exit' to quit.\n")
+    print(f"PawPal+ ({describe_mode(agent)}). Ctrl-D or 'exit' to quit.\n")
 
     while True:
         try:

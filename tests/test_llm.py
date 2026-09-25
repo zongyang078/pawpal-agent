@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 from llm import (
+    DEFAULT_MODELS,
     AnthropicClient,
     AssistantTurn,
     FailingClient,
@@ -23,6 +24,7 @@ from llm import (
     ToolResultsTurn,
     UserTurn,
     build_client,
+    model_from_env,
     provider_from_env,
 )
 
@@ -212,3 +214,47 @@ class TestFailingClient:
     def test_always_raises(self):
         with pytest.raises(LLMError):
             FailingClient().complete("sys", [], TOOLS)
+
+
+class TestModelOverride:
+    """Model names go stale, so they must be settable without an edit."""
+
+    def test_provider_specific_variable_wins(self):
+        env = {"OPENAI_MODEL": "gpt-5", "PAWPAL_MODEL": "catch-all"}
+        assert model_from_env("openai", env) == "gpt-5"
+
+    def test_catch_all_applies_to_any_provider(self):
+        env = {"PAWPAL_MODEL": "catch-all"}
+        assert model_from_env("openai", env) == "catch-all"
+        assert model_from_env("anthropic", env) == "catch-all"
+
+    def test_one_provider_can_be_pinned_while_the_other_defaults(self):
+        env = {"ANTHROPIC_MODEL": "claude-opus-5"}
+        assert model_from_env("anthropic", env) == "claude-opus-5"
+        assert model_from_env("openai", env) is None
+
+    def test_no_override_falls_through_to_the_default(self):
+        assert model_from_env("openai", {}) is None
+        assert build_client("openai", "k").model == DEFAULT_MODELS["openai"]
+
+    def test_agent_picks_up_the_override(self, monkeypatch):
+        from agent import PawPalAgent
+        from pawpal_system import Owner
+
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+        monkeypatch.setenv("ANTHROPIC_MODEL", "claude-opus-5")
+
+        agent = PawPalAgent(owner=Owner(name="T"))
+        assert agent.api_provider == "anthropic"
+        assert agent.model == "claude-opus-5"
+
+    def test_explicit_argument_beats_the_environment(self, monkeypatch):
+        from agent import PawPalAgent
+        from pawpal_system import Owner
+
+        monkeypatch.setenv("OPENAI_API_KEY", "k")
+        monkeypatch.setenv("OPENAI_MODEL", "from-env")
+
+        agent = PawPalAgent(owner=Owner(name="T"), model="from-argument")
+        assert agent.model == "from-argument"

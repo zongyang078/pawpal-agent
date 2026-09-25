@@ -297,10 +297,23 @@ class FailingClient:
 
 # --- Construction ---
 
+# Defaults, not commitments. Model names go stale faster than the code around
+# them, so OPENAI_MODEL / ANTHROPIC_MODEL override these without an edit --
+# see model_from_env(). Both entries are cheap, fast models chosen because
+# this workload is short tool-calling turns, not long-form generation.
 DEFAULT_MODELS = {
     "openai": "gpt-4o-mini",
-    "anthropic": "claude-sonnet-4-20250514",
+    "anthropic": "claude-sonnet-5",
 }
+
+
+def model_from_env(provider: str, env: dict) -> str | None:
+    """Model override for `provider`, if the environment names one.
+
+    A provider-specific variable wins over the catch-all, so you can pin one
+    provider while leaving the other at its default.
+    """
+    return env.get(f"{provider.upper()}_MODEL") or env.get("PAWPAL_MODEL")
 
 
 def build_client(
