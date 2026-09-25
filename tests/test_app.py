@@ -10,6 +10,8 @@ from pathlib import Path
 import pytest
 from streamlit.testing.v1 import AppTest
 
+from llm import FailingClient, FakeClient, LLMResponse
+
 APP_PATH = Path(__file__).resolve().parent.parent / "app.py"
 
 
@@ -130,3 +132,104 @@ class TestResetSession:
 
         assert not app.exception
         assert "Dog grooming basics" in assistant_text(app)
+
+
+class TestDegradedProvider:
+    """A configured provider is not a working one, and the UI must say so.
+
+    This is the demo-day failure: the sidebar showed a green "LLM mode:
+    anthropic" badge while every request 401'd and the answers came from
+    keyword matching.
+    """
+
+    @pytest.fixture
+    def broken_app(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-not-a-real-key")
+
+        at = AppTest.from_file(str(APP_PATH), default_timeout=30)
+        at.run()
+        # Swap in a client that always fails, standing in for a bad key.
+        at.session_state.agent.llm_client = FailingClient("401 invalid api key")
+        return at
+
+    def test_badge_is_green_before_anything_is_tried(self, broken_app):
+        assert broken_app.sidebar.success, "a configured key looks fine until used"
+
+    def test_badge_turns_red_after_a_failed_call(self, broken_app):
+        broken_app.chat_input[0].set_value("How often should I bathe my dog?").run()
+
+        assert not broken_app.sidebar.success, "the green badge must not survive"
+        errors = [e.value for e in broken_app.sidebar.error]
+        assert any("call failed" in e for e in errors)
+        assert any("401" in c.value for c in broken_app.sidebar.caption)
+
+    def test_the_answer_still_arrives(self, broken_app):
+        """Degrading beats erroring out -- that part of the old behaviour was right."""
+        broken_app.chat_input[0].set_value("How often should I bathe my dog?").run()
+
+        assert "Dog grooming basics" in assistant_text(broken_app)
+
+    def test_recovery_clears_the_warning(self, broken_app):
+        broken_app.chat_input[0].set_value("How often should I bathe my dog?").run()
+        assert broken_app.sidebar.error
+
+        broken_app.session_state.agent.llm_client = FakeClient([LLMResponse(text="ok")])
+        broken_app.chat_input[0].set_value("hi").run()
+
+        assert not broken_app.sidebar.error
+        assert broken_app.sidebar.success
+
+
+class TestProviderSelector:
+    """The one thing two providers actually buy a demo: switching live."""
+
+    def _app(self, tmp_path, monkeypatch, **env):
+        monkeypatch.chdir(tmp_path)
+        for var in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_MODEL",
+                    "ANTHROPIC_MODEL", "PAWPAL_MODEL"):
+            monkeypatch.delenv(var, raising=False)
+        for var, value in env.items():
+            monkeypatch.setenv(var, value)
+
+        at = AppTest.from_file(str(APP_PATH), default_timeout=30)
+        at.run()
+        assert not at.exception, at.exception
+        return at
+
+    def test_hidden_with_no_keys(self, tmp_path, monkeypatch):
+        assert self._app(tmp_path, monkeypatch).selectbox == []
+
+    def test_hidden_with_one_key(self, tmp_path, monkeypatch):
+        """Nothing to choose between, so do not ask."""
+        app = self._app(tmp_path, monkeypatch, ANTHROPIC_API_KEY="sk-ant-x")
+        assert app.selectbox == []
+        assert "anthropic" in app.sidebar.success[0].value
+
+    def test_offered_with_both_keys(self, tmp_path, monkeypatch):
+        app = self._app(tmp_path, monkeypatch,
+                        ANTHROPIC_API_KEY="sk-ant-x", OPENAI_API_KEY="sk-x")
+
+        selector = app.sidebar.selectbox[0]
+        assert list(selector.options) == ["anthropic", "openai"]
+        assert selector.value == "anthropic", "the default provider is preselected"
+
+    def test_switching_rebuilds_the_agent_on_the_chosen_provider(self, tmp_path, monkeypatch):
+        app = self._app(tmp_path, monkeypatch,
+                        ANTHROPIC_API_KEY="sk-ant-x", OPENAI_API_KEY="sk-x")
+
+        app.sidebar.selectbox[0].select("openai").run()
+
+        assert app.session_state.agent.api_provider == "openai"
+        assert app.session_state.agent.llm_client.api_key == "sk-x"
+        assert "openai" in app.sidebar.success[0].value
+
+    def test_switching_keeps_the_interaction_log(self, tmp_path, monkeypatch):
+        """Rebuilding the agent must not silently reset the log counter."""
+        app = self._app(tmp_path, monkeypatch,
+                        ANTHROPIC_API_KEY="sk-ant-x", OPENAI_API_KEY="sk-x")
+        logger = app.session_state.agent.logger
+
+        app.sidebar.selectbox[0].select("openai").run()
+
+        assert app.session_state.agent.logger is logger

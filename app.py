@@ -7,9 +7,12 @@ answers care questions, and provides proactive safety advice.
 """
 
 
+import os
+
 import streamlit as st
 
 from agent import PawPalAgent
+from llm import PROVIDER_KEY_VARS, key_for_provider
 from pawpal_system import Owner
 
 # --- Page config ---
@@ -45,8 +48,13 @@ owner: Owner = st.session_state.owner
 with st.sidebar:
     st.subheader("Status")
 
-    # LLM mode indicator
-    if agent.use_llm:
+    # LLM mode indicator. A configured provider is not the same as a working
+    # one: a failed call degrades to rule-based, and a green badge over
+    # keyword-matched answers is how a demo goes wrong without anyone noticing.
+    if agent.use_llm and agent.last_degraded_reason:
+        st.error(f"{agent.api_provider} call failed — answering in rule-based mode")
+        st.caption(agent.last_degraded_reason)
+    elif agent.use_llm:
         st.success(f"LLM mode: {agent.api_provider} ({agent.model})")
     else:
         st.info("Rule-based mode (no API key set)")
@@ -54,6 +62,26 @@ with st.sidebar:
             "Set OPENAI_API_KEY or ANTHROPIC_API_KEY environment variable "
             "to enable LLM-powered reasoning."
         )
+
+    # Only worth showing when there is something to choose between. Switching
+    # rebuilds the agent but carries the logger and the knowledge base across,
+    # so the interaction log stays continuous and the corpus is not reindexed.
+    available = [p for p in PROVIDER_KEY_VARS if key_for_provider(p, os.environ)]
+    if len(available) > 1:
+        chosen = st.selectbox(
+            "Provider",
+            available,
+            index=available.index(agent.api_provider) if agent.api_provider in available else 0,
+            help="Both keys are set; pick which one answers.",
+        )
+        if chosen != agent.api_provider:
+            st.session_state.agent = PawPalAgent(
+                owner=owner,
+                api_provider=chosen,
+                logger=agent.logger,
+                knowledge_base=agent.knowledge_base,
+            )
+            st.rerun()
 
     st.divider()
 
