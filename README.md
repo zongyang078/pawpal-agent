@@ -82,17 +82,24 @@ pip install -e ".[dev]"      # drop [dev] to skip pytest/ruff/coverage
 This installs a `pawpal` command; the examples below use `python cli.py` so they
 work without installing.
 
-Optionally export `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` to enable LLM mode;
-Anthropic wins if both are set. Model names go stale faster than the code
-around them, so the defaults are overridable without an edit:
+LLM mode needs a key from **one** provider. With both set Anthropic answers by
+default; `--provider` overrides that on the CLI, and the sidebar offers a
+selector so a running session can switch between them. Without a key the agent
+runs on keyword dispatch, so everything below works either way.
 
 ```bash
-export ANTHROPIC_API_KEY=...          # picks claude-sonnet-5
-export ANTHROPIC_MODEL=claude-opus-5  # or pin something else
-export PAWPAL_MODEL=...               # applies to whichever provider is active
+cp .env.example .env     # .env is gitignored
+$EDITOR .env             # uncomment one key
+source .env
 
-python cli.py ask --trace "hi"        # prints the provider and model in use
+python cli.py ask --trace "hi"   # stderr names the provider and model in use
 ```
+
+Keep the key in `.env` rather than typing `export` in a terminal: it then lives
+in exactly one place you can find, rotate, and delete, and it stays out of your
+shell history. `.env.example` also documents `ANTHROPIC_MODEL` /
+`OPENAI_MODEL` / `PAWPAL_MODEL`, which override the built-in defaults —
+model names go stale faster than the code around them.
 
 ```bash
 python cli.py seed                    # write a sample owner, 2 pets, 6 tasks
@@ -101,6 +108,7 @@ python cli.py pets                    # registered pets and pending counts
 python cli.py ask "..." [--trace]     # one question, optionally with the tool trace
 python cli.py chat [--trace]          # interactive session
 python cli.py --data demo.json ...    # use a different state file
+python cli.py --provider openai ...   # force a provider when both keys are set
 
 streamlit run app.py                  # chat UI
 ```
@@ -108,24 +116,24 @@ streamlit run app.py                  # chat UI
 ## Testing
 
 ```bash
-pytest                       # 207 tests
+pytest                       # 238 tests
 ruff check .                 # lint
 coverage run -m pytest && coverage report
 ```
 
-207 tests across 10 modules, no network access required:
+238 tests across 10 modules, no network access required:
 
 | Module | Tests | Under test |
 |---|---|---|
-| [`test_agent.py`](tests/test_agent.py) | 34 | Intent detection, ReAct loop, guardrail regressions, degradation |
+| [`test_agent.py`](tests/test_agent.py) | 40 | Intent detection, ReAct loop, guardrail regressions, degradation |
 | [`test_domain.py`](tests/test_domain.py) | 33 | Task, Pet, Owner, Scheduler, slot finder, persistence |
 | [`test_evals.py`](tests/test_evals.py) | 32 | Metric arithmetic, dataset integrity, harness CLI |
-| [`test_llm.py`](tests/test_llm.py) | 26 | Adapter translation both ways, error mapping, client construction |
-| [`test_guardrails.py`](tests/test_guardrails.py) | 17 | Toxic food, emergency, referral, confidence |
+| [`test_llm.py`](tests/test_llm.py) | 34 | Adapter translation both ways, error mapping, client construction |
+| [`test_guardrails.py`](tests/test_guardrails.py) | 19 | Toxic food, emergency, referral, confidence |
 | [`test_knowledge_base.py`](tests/test_knowledge_base.py) | 17 | Retrieval, ranking, IDF weighting, corpus loading |
 | [`test_tools.py`](tests/test_tools.py) | 17 | Tool schemas, dispatch, persistence failures |
-| [`test_app.py`](tests/test_app.py) | 12 | Streamlit UI driven through `AppTest`: widgets, reruns, reset |
-| [`test_cli.py`](tests/test_cli.py) | 11 | Every subcommand, exit codes, stream routing |
+| [`test_app.py`](tests/test_app.py) | 21 | Streamlit UI driven through `AppTest`: widgets, reruns, reset |
+| [`test_cli.py`](tests/test_cli.py) | 17 | Every subcommand, exit codes, stream routing |
 | [`test_logger.py`](tests/test_logger.py) | 8 | Recording, summary, JSON export |
 
 Line coverage is 89%:
@@ -136,6 +144,13 @@ knowledge_base.py  96%    llm.py             94%    app.py             91%
 tools.py           90%    logger.py          88%    evals/run.py       87%
 cli.py             84%    agent.py           73%
 ```
+
+A hermetic suite cannot prove the one thing that matters most about an
+adapter: that the vendor accepts what it sends. Both providers were therefore
+checked end to end against their live APIs — key handling, a single tool call,
+several tools in one turn, the guardrail pre-empting the provider, and
+retrieval — with [`scripts/smoke_live.sh`](scripts/smoke_live.sh), which stays
+out of CI because it needs a key and spends money.
 
 The ReAct loop is covered against `FakeClient`: multi-step tool chains, parallel
 calls in one reply, the iteration cap, tool failures coming back as
@@ -320,7 +335,8 @@ pawpal-agent/
 ├── app.py                # Streamlit chat UI
 ├── knowledge/            # 14 care documents (.txt)
 ├── evals/                # labelled datasets, metrics, harness
-├── tests/                # 207 tests across 10 modules
+├── scripts/              # live provider smoke check (not in CI)
+├── tests/                # 238 tests across 10 modules
 ├── assets/               # architecture diagram, screenshots
 ├── model_card.md         # intended use, limitations, safety gaps
 ├── pyproject.toml        # deps, ruff, pytest, coverage config

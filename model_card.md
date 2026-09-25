@@ -134,13 +134,14 @@ LLM mode — only the deterministic components.
 Intent detection at 68% is measured and left unfixed: it governs only the
 no-API-key path, and the effort went to the safety layer first.
 
-What does exist beyond this is a deterministic test suite: 207 tests across 10
+What does exist beyond this is a deterministic test suite: 238 tests across 10
 modules at 89%
 line coverage, with guardrails at 99% and the domain layer at 98%. The reasoning
 loop is exercised against a scripted client, so multi-step tool chains, the
 iteration cap, tool failures, and provider outages are covered without a
 network. None of that measures answer *quality* — only that the machinery
-behaves as specified.
+behaves as specified. Both provider adapters were separately verified against
+their live APIs, which is the one property a fake client cannot establish.
 
 ## Misuse Risks
 
