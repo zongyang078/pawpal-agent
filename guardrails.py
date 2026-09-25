@@ -30,20 +30,26 @@ TOXIC_FOODS: dict[str, list[str]] = {
 
 # Keywords that suggest a medical emergency
 EMERGENCY_KEYWORDS = [
-    "seizure", "seizures", "not breathing", "unconscious", "bleeding heavily",
+    "seizure", "seizures", "unconscious", "bleeding heavily",
     "poisoned", "ate poison", "ate chocolate", "choking",
-    "collapsed", "paralyzed", "not moving", "hit by car", "broken bone",
+    "paralyzed", "not moving", "hit by car", "broken bone",
+    # Respiratory distress, which owners phrase many ways.
+    "not breathing", "stopped breathing", "trouble breathing",
+    "difficulty breathing", "struggling to breathe", "labored breathing",
+    "in distress",
 ]
 
-# Keywords that a word match alone gets wrong. "swallowed" is what a dog does
-# at every meal, so a bare match fires on "swallowed his food quickly"; it only
-# signals an emergency when the object is not ordinary food or water. Keyword
-# tables cannot express much more nuance than this -- see the model card.
+# Keywords a word match alone gets wrong, because the same word is ordinary in
+# another context. Keyword tables cannot express much more nuance than this --
+# see the model card.
 EMERGENCY_PATTERNS = {
+    # A dog swallows food at every meal; only a non-food object is an emergency.
     "swallowed": (
         r"\bswallowed\b(?!\s+(?:\w+\s+)?"
         r"(?:food|meal|kibble|dinner|breakfast|supper|water|treats?)\b)"
     ),
+    # "collapsed onto the couch" is a nap, not a collapse.
+    "collapsed": r"\bcollapsed\b(?!\s+(?:onto|into|on\s+to|in\s+to)\b)",
 }
 
 # Keywords that suggest the user needs vet advice, not AI advice
@@ -51,24 +57,46 @@ VET_REFERRAL_KEYWORDS = [
     "blood in stool", "blood in urine", "lump", "tumor", "cancer",
     "limping for days", "not eating for days", "vomiting blood",
     "diarrhea for days", "eye infection", "ear infection", "skin rash",
-    "breathing problems", "heart", "diabetes", "kidney",
+    "breathing problems", "diabetes", "kidney",
 ]
+
+VET_REFERRAL_PATTERNS = {
+    # "heart" alone fires on "my dog has a big heart"; it is a medical topic
+    # only when it names a cardiac condition.
+    "heart": (
+        r"\bheart\b(?=\s+(?:disease|murmur|failure|condition|problems?"
+        r"|rate|attack|issues?|surgery|medication))"
+    ),
+}
+
+
+# Words of slack allowed between the terms of a multi-word keyword. Phrases
+# written as "hit by car" have to survive "he was hit by a car", and
+# "blood in stool" has to survive "blood in my cat's stool".
+_PHRASE_GAP = r"\W+(?:\w+\W+){0,3}?"
 
 
 def _compile_keywords(keywords: list[str]) -> list[tuple[str, re.Pattern]]:
     """Pair each keyword with a word-boundary-anchored pattern.
 
-    Bare substring matching produced false positives that a guardrail cannot
-    afford: "plump" contains "lump", and "swallowed his food" contains
-    "swallowed". Anchoring on \\b means a keyword only matches a whole word.
+    Bare substring matching produced false positives a guardrail cannot afford
+    ("plump" contains "lump"), while exact phrase matching missed true
+    positives that differ by a single filler word. Terms are anchored on \\b
+    and joined by a bounded gap.
     """
-    return [(kw, re.compile(rf"\b{re.escape(kw)}\b")) for kw in keywords]
+    patterns = []
+    for keyword in keywords:
+        body = _PHRASE_GAP.join(re.escape(word) for word in keyword.split())
+        patterns.append((keyword, re.compile(rf"\b{body}\b")))
+    return patterns
 
 
 _EMERGENCY_PATTERNS = _compile_keywords(EMERGENCY_KEYWORDS) + [
     (label, re.compile(pattern)) for label, pattern in EMERGENCY_PATTERNS.items()
 ]
-_VET_REFERRAL_PATTERNS = _compile_keywords(VET_REFERRAL_KEYWORDS)
+_VET_REFERRAL_PATTERNS = _compile_keywords(VET_REFERRAL_KEYWORDS) + [
+    (label, re.compile(pattern)) for label, pattern in VET_REFERRAL_PATTERNS.items()
+]
 _TOXIC_PATTERNS = {
     species: _compile_keywords(items) for species, items in TOXIC_FOODS.items()
 }

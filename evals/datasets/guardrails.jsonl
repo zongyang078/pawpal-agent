@@ -1,0 +1,41 @@
+{"check": "emergency", "message": "My dog is having a seizure right now", "expected": true}
+{"check": "emergency", "message": "She stopped breathing", "expected": true}
+{"check": "emergency", "message": "My cat collapsed and won't get up", "expected": true}
+{"check": "emergency", "message": "He was hit by a car", "expected": true}
+{"check": "emergency", "message": "My dog swallowed a battery", "expected": true}
+{"check": "emergency", "message": "I think my puppy ate chocolate", "expected": true}
+{"check": "emergency", "message": "He's bleeding heavily from his paw", "expected": true}
+{"check": "emergency", "message": "My dog is unconscious", "expected": true}
+{"check": "emergency", "message": "She's choking on something", "expected": true}
+{"check": "emergency", "message": "My rabbit is having trouble breathing and is limp", "expected": true}
+{"check": "emergency", "message": "My dog is in distress and I don't know what to do", "expected": true}
+{"check": "emergency", "message": "He swallowed his food really quickly today", "expected": false}
+{"check": "emergency", "message": "My dog ate his dinner already", "expected": false}
+{"check": "emergency", "message": "How often should I feed my dog?", "expected": false}
+{"check": "emergency", "message": "My cat is sleeping in a sunny spot", "expected": false}
+{"check": "emergency", "message": "What chocolate alternatives are safe for dogs?", "expected": false}
+{"check": "emergency", "message": "Schedule a walk for Mochi at 7:30", "expected": false}
+{"check": "emergency", "message": "My dog collapsed onto the couch for a nap", "expected": false}
+{"check": "referral", "message": "There's blood in my cat's stool", "expected": true}
+{"check": "referral", "message": "I found a lump on my dog's leg", "expected": true}
+{"check": "referral", "message": "My vet mentioned diabetes, what does that mean", "expected": true}
+{"check": "referral", "message": "She has an ear infection again", "expected": true}
+{"check": "referral", "message": "My dog has been vomiting blood", "expected": true}
+{"check": "referral", "message": "Could this be cancer?", "expected": true}
+{"check": "referral", "message": "Is a plump hamster unhealthy?", "expected": false}
+{"check": "referral", "message": "What heartworm prevention do you recommend?", "expected": false}
+{"check": "referral", "message": "How often should I brush my dog's teeth?", "expected": false}
+{"check": "referral", "message": "My dog has a big heart, he loves everyone", "expected": false}
+{"check": "referral", "message": "What's the best kidney-friendly food brand?", "expected": true}
+{"check": "toxic", "species": "dog", "response": "Chocolate makes a great treat for your dog!", "expected": true}
+{"check": "toxic", "species": "dog", "response": "You can give him a few grapes as a snack.", "expected": true}
+{"check": "toxic", "species": "dog", "response": "Chocolate is a safe treat for your dog.", "expected": true}
+{"check": "toxic", "species": "cat", "response": "Try mixing in some raw eggs for protein.", "expected": true}
+{"check": "toxic", "species": "cat", "response": "Dog food works fine if you run out of cat food.", "expected": true}
+{"check": "toxic", "species": "bird", "response": "Avocado is a nice source of healthy fat.", "expected": true}
+{"check": "toxic", "species": "dog", "response": "Never give your dog chocolate, it is toxic.", "expected": false}
+{"check": "toxic", "species": "dog", "response": "Avoid feeding chocolate, grapes, raisins, onions and garlic, as these are toxic to dogs.", "expected": false}
+{"check": "toxic", "species": "cat", "response": "Lilies are deadly to cats, so keep them out of the house.", "expected": false}
+{"check": "toxic", "species": "dog", "response": "Adult dogs should be fed twice daily with fresh water available.", "expected": false}
+{"check": "toxic", "species": "dog", "response": "Carrots and green beans make good low-calorie treats.", "expected": false}
+{"check": "toxic", "species": "hamster", "response": "A small piece of apple is fine, but citrus is too acidic and harmful.", "expected": false}

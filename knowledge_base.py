@@ -274,11 +274,32 @@ class KnowledgeBase:
             term: math.log((1 + n) / (1 + freq)) + 1 for term, freq in doc_freq.items()
         }
 
+    # Query words that name a species, mapped to the species they name. These
+    # are scored by the multiplier below, not by term frequency -- see
+    # _tf_idf_score.
+    SPECIES_TERMS = {
+        "dog": "dog", "puppy": "dog",
+        "cat": "cat", "kitten": "cat",
+        "bird": "bird", "parrot": "bird",
+        "hamster": "hamster",
+    }
+
+    TITLE_BOOST = 3.0
+    SPECIES_MATCH_BOOST = 1.5
+    SPECIES_MISMATCH_PENALTY = 0.3
+
     def _tf_idf_score(self, query_tokens: list[str], doc: Document) -> float:
         """Compute TF-IDF relevance score between query and document.
 
-        Title matches get a 3x boost, and species mentions in the query
-        give a bonus to documents matching that species.
+        Title matches are boosted, and the score is scaled by whether the
+        document covers the species the query asked about.
+
+        Species words are deliberately excluded from the term sum. They are
+        already represented by the species multiplier, and counting them twice
+        let them dominate: for "my dog has been vomiting for two days", the
+        word "dog" alone contributed 62% of the score of "Dog feeding
+        guidelines", which beat the health article that actually contains
+        "vomiting". Ranking should turn on the terms that discriminate.
         """
         title_tokens = self._tokenize(doc.title)
         content_tokens = self._tokenize(doc.content)
@@ -286,49 +307,57 @@ class KnowledgeBase:
         if not all_tokens:
             return 0.0
 
-        # Term frequency in this document
         tf: dict[str, float] = {}
         for token in all_tokens:
             tf[token] = tf.get(token, 0) + 1
         for token in tf:
             tf[token] /= len(all_tokens)
 
-        # Title term set for boosting
         title_set = set(title_tokens)
+        query_species = {
+            self.SPECIES_TERMS[qt] for qt in query_tokens if qt in self.SPECIES_TERMS
+        }
 
-        # Score: sum of TF * IDF for each query term found in doc
+        # A query of nothing but species words ("dog") has no discriminating
+        # terms to score, so fall back to scoring the species words themselves
+        # rather than returning nothing.
+        scoring_terms = [
+            qt for qt in query_tokens if qt not in self.SPECIES_TERMS
+        ] or query_tokens
+
         score = 0.0
-        for qt in query_tokens:
+        for qt in scoring_terms:
             if qt in tf:
                 base = tf[qt] * self._idf_cache.get(qt, 0)
-                # Boost title matches 3x
                 if qt in title_set:
-                    base *= 3.0
+                    base *= self.TITLE_BOOST
                 score += base
 
-        # Species relevance bonus: if query mentions a species and
-        # the document covers that species, add a bonus
-        species_keywords = {"dog", "dogs", "puppy", "puppies", "cat", "cats",
-                            "kitten", "kittens", "bird", "birds", "hamster", "hamsters"}
-        query_species = set()
-        for qt in query_tokens:
-            if qt in ("dog", "dogs", "puppy", "puppies"):
-                query_species.add("dog")
-            elif qt in ("cat", "cats", "kitten", "kittens"):
-                query_species.add("cat")
-            elif qt in ("bird", "birds"):
-                query_species.add("bird")
-            elif qt in ("hamster", "hamsters"):
-                query_species.add("hamster")
-
         if query_species:
-            matching_species = query_species & set(doc.species)
-            if matching_species:
-                score *= 1.5  # Boost docs that match the queried species
-            elif not set(doc.species) & query_species:
-                score *= 0.3  # Penalize docs for wrong species
+            if query_species & set(doc.species):
+                score *= self.SPECIES_MATCH_BOOST
+            else:
+                score *= self.SPECIES_MISMATCH_PENALTY
 
         return score
+
+    def rank(self, query: str, top_k: int = 3) -> list[tuple[float, Document]]:
+        """Return the top_k documents for a query, highest score first.
+
+        Separate from search() so retrieval quality can be measured -- search()
+        returns prose, which you cannot compute recall@k against.
+        """
+        query_tokens = self._tokenize(query)
+        if not query_tokens:
+            return []
+
+        scored = [
+            (score, doc)
+            for doc in self.documents
+            if (score := self._tf_idf_score(query_tokens, doc)) > 0
+        ]
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return scored[:top_k]
 
     def search(self, query: str, top_k: int = 3) -> str:
         """Search the knowledge base and return formatted results.
@@ -340,18 +369,10 @@ class KnowledgeBase:
         Returns:
             Formatted string with relevant knowledge snippets.
         """
-        query_tokens = self._tokenize(query)
-        if not query_tokens:
+        if not self._tokenize(query):
             return "Please provide a more specific query."
 
-        scored = []
-        for doc in self.documents:
-            score = self._tf_idf_score(query_tokens, doc)
-            if score > 0:
-                scored.append((score, doc))
-
-        scored.sort(key=lambda x: x[0], reverse=True)
-        top_results = scored[:top_k]
+        top_results = self.rank(query, top_k)
 
         if not top_results:
             return (

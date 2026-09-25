@@ -96,25 +96,27 @@ streamlit run app.py                  # chat UI
 python -m pytest tests/ -q
 ```
 
-151 tests across 8 modules, no network access required:
+182 tests across 9 modules, no network access required:
 
 | Module | Tests | Under test |
 |---|---|---|
 | [`test_agent.py`](tests/test_agent.py) | 34 | Intent detection, ReAct loop, guardrail regressions, degradation |
 | [`test_domain.py`](tests/test_domain.py) | 33 | Task, Pet, Owner, Scheduler, slot finder, persistence |
+| [`test_evals.py`](tests/test_evals.py) | 29 | Metric arithmetic, dataset integrity, harness CLI |
 | [`test_llm.py`](tests/test_llm.py) | 20 | Adapter translation both ways, error mapping, client construction |
 | [`test_guardrails.py`](tests/test_guardrails.py) | 17 | Toxic food, emergency, referral, confidence |
+| [`test_knowledge_base.py`](tests/test_knowledge_base.py) | 16 | Retrieval, ranking, IDF weighting, corpus loading |
 | [`test_tools.py`](tests/test_tools.py) | 14 | Tool schemas and dispatch |
-| [`test_knowledge_base.py`](tests/test_knowledge_base.py) | 14 | Retrieval, IDF weighting, corpus loading |
 | [`test_cli.py`](tests/test_cli.py) | 11 | Every subcommand, exit codes, stream routing |
 | [`test_logger.py`](tests/test_logger.py) | 8 | Recording, summary, JSON export |
 
-Line coverage is 81%:
+Line coverage is 83%:
 
 ```
-guardrails.py      99%    pawpal_system.py   98%    knowledge_base.py  96%
-llm.py             94%    logger.py          88%    tools.py           84%
-cli.py             83%    agent.py           74%    app.py              0%
+evals/metrics.py  100%    guardrails.py      99%    pawpal_system.py   98%
+knowledge_base.py  96%    llm.py             94%    logger.py          88%
+evals/run.py       87%    tools.py           84%    cli.py             83%
+agent.py           74%    app.py              0%
 ```
 
 The ReAct loop is covered against `FakeClient`: multi-step tool chains, parallel
@@ -123,6 +125,59 @@ observations, and the fallback to rule-based mode when a provider raises. What
 remains uncovered in `agent.py` is the rule-based parameter extraction — the
 `_extract_*` and `_guess_*` helpers, which is also where its remaining defects
 live (see Still outstanding).
+
+## Evaluation
+
+```bash
+python -m evals.run                 # all suites
+python -m evals.run --show-errors   # every failing case
+python -m evals.run --fail-under 0.9
+```
+
+121 labelled cases, run offline against the rule-based path — no API key, no
+network, reproducible:
+
+| Suite | Metric | Score | n |
+|---|---|---|---|
+| Intent detection | accuracy | 68.0% | 50 |
+| Retrieval | recall@1 / recall@3 / MRR | 90.0% / 93.3% / 0.917 | 30 |
+| Guardrail: emergency | recall / FPR | 100% / 0% | 18 |
+| Guardrail: vet referral | recall / FPR | 100% / 0% | 11 |
+| Guardrail: toxic food | recall / FPR | 100% / 0% | 12 |
+
+**The first run failed badly, which was the point.** Emergency recall was 63.6%
+and retrieval recall@1 was 56.7%. Three diagnoses followed:
+
+- *Phrases were matched rigidly.* "hit by car" missed "he was hit by **a**
+  car"; "blood in stool" missed "blood in **my cat's** stool". Keyword terms
+  now allow a bounded gap between them.
+- *Single words were too broad.* "heart" fired on "my dog has a big heart",
+  "collapsed" on "collapsed onto the couch for a nap" — the same failure as
+  "swallowed". Both now require medical or non-benign context.
+- *Retrieval was ranking on the species word.* For "my dog has been vomiting
+  for two days", the word "dog" alone supplied 62% of the score of "Dog feeding
+  guidelines", which beat the health article that actually contains "vomiting".
+  Species is already applied as a multiplier, so counting it in the term sum
+  double-counted it. Excluding species terms took recall@1 from 56.7% to 90.0%
+  and MRR from 0.661 to 0.917.
+
+**Read the guardrail scores with suspicion.** They were tuned against these
+same 41 cases, so 100% is a statement about this set, not about English. The
+number worth trusting is the direction of the change and the class of bug it
+caught. A held-out set is the obvious next step.
+
+**Intent detection at 68% is the honest weak spot**, and it is left unfixed.
+`detect_conflicts` recall is 25%; `general_chat` precision is 38.5% because
+unmatched utterances fall through to it; "schedule" appears in both the
+`add_task` and `get_schedule` keyword lists, so the two collide. This only
+affects the no-API-key path — in LLM mode the model selects tools directly —
+which is why the effort went to the safety layer first.
+
+Retrieval's two remaining misses are vocabulary gaps, not ranking bugs: "what
+shots does my puppy need" fails because the corpus says "vaccines", and "what
+should I feed my parrot" because the bird article never uses the word "feed".
+That is the ceiling of lexical matching, and it is where embeddings would
+actually earn their cost.
 
 ## Design decisions
 
@@ -186,9 +241,8 @@ is about as much nuance as a keyword table can express.
 
 ## Still outstanding
 
-**No quantitative evaluation.** No measured intent accuracy, retrieval recall,
-or guardrail false-positive rate. This is the biggest remaining gap — see the
-model card's Evaluation section.
+**Intent detection sits at 68%** and the guardrail suites have no held-out
+split — see Evaluation.
 
 Also: tool results are returned as strings, so the agent cannot branch on
 failure programmatically; no timeouts, retries, or cost ceilings on provider
@@ -217,7 +271,8 @@ pawpal-agent/
 ├── cli.py                # terminal entry point
 ├── app.py                # Streamlit chat UI
 ├── knowledge/            # 14 care documents (.txt)
-├── tests/                # 151 tests across 8 modules
+├── evals/                # labelled datasets, metrics, harness
+├── tests/                # 182 tests across 9 modules
 ├── assets/               # architecture diagram, screenshots
 ├── model_card.md         # intended use, limitations, safety gaps
 └── requirements.txt

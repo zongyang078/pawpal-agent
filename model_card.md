@@ -109,12 +109,33 @@ have to, and the tables remain English-only.
 
 ## Evaluation
 
-**There is no quantitative evaluation yet.** No measured intent accuracy, no
-retrieval recall, no guardrail false-positive rate. This is the most significant
-gap in the project, and the claims above about retrieval and guardrail quality
-should be read as design intent rather than measured behaviour.
+121 labelled cases, run offline against the rule-based path (`python -m
+evals.run`):
 
-What does exist is a deterministic test suite: 151 tests across 8 modules at 81%
+| Suite | Metric | Score | n |
+|---|---|---|---|
+| Intent detection | accuracy | 68.0% | 50 |
+| Retrieval | recall@1 / recall@3 / MRR | 90.0% / 93.3% / 0.917 | 30 |
+| Guardrail: emergency | recall / false-positive rate | 100% / 0% | 18 |
+| Guardrail: vet referral | recall / false-positive rate | 100% / 0% | 11 |
+| Guardrail: toxic food | recall / false-positive rate | 100% / 0% | 12 |
+
+**These numbers carry three caveats, and the guardrail row carries the worst
+of them.** The safety checks were tuned against these same 41 cases after an
+initial run scored 63.6% emergency recall; 100% therefore describes this set,
+not English. There is no held-out split. A perfect score on a set you fixed
+against is evidence that the specific bugs are gone, not that the check is
+sound.
+
+Second, the set is small and written by one person, so it reflects one guess
+about how owners phrase things. Third, nothing here measures answer quality in
+LLM mode — only the deterministic components.
+
+Intent detection at 68% is measured and left unfixed: it governs only the
+no-API-key path, and the effort went to the safety layer first.
+
+What does exist beyond this is a deterministic test suite: 182 tests across 9
+modules at 83%
 line coverage, with guardrails at 99% and the domain layer at 98%. The reasoning
 loop is exercised against a scripted client, so multi-step tool chains, the
 iteration cap, tool failures, and provider outages are covered without a

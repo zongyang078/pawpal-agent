@@ -1,0 +1,50 @@
+{"utterance": "Add Mochi, a dog", "intent": "add_pet"}
+{"utterance": "I want to add a new pet", "intent": "add_pet"}
+{"utterance": "I got a new kitten yesterday", "intent": "add_pet"}
+{"utterance": "Register my hamster Peanut", "intent": "add_pet"}
+{"utterance": "I have a new bird named Kiwi", "intent": "add_pet"}
+{"utterance": "Please add a cat called Luna", "intent": "add_pet"}
+{"utterance": "Schedule a walk for Mochi at 8am", "intent": "add_task"}
+{"utterance": "Add a task to feed Luna at 18:00", "intent": "add_task"}
+{"utterance": "Remind me to give Mochi his medication at 9", "intent": "add_task"}
+{"utterance": "Set up a grooming session on Saturday", "intent": "add_task"}
+{"utterance": "Book a vet appointment for Luna next week", "intent": "add_task"}
+{"utterance": "I need to brush Mochi every evening", "intent": "add_task"}
+{"utterance": "Put a nail trim on the calendar", "intent": "add_task"}
+{"utterance": "I just finished the morning walk", "intent": "complete_task"}
+{"utterance": "Done with Mochi's breakfast", "intent": "complete_task"}
+{"utterance": "Mark the grooming as done", "intent": "complete_task"}
+{"utterance": "I completed Luna's medication", "intent": "complete_task"}
+{"utterance": "Just did the evening feeding", "intent": "complete_task"}
+{"utterance": "What's on today's schedule?", "intent": "get_schedule"}
+{"utterance": "What do I need to do today?", "intent": "get_schedule"}
+{"utterance": "Show me the daily plan", "intent": "get_schedule"}
+{"utterance": "What needs to be done?", "intent": "get_schedule"}
+{"utterance": "Tasks for Mochi", "intent": "get_pet_tasks"}
+{"utterance": "Show me Luna's tasks", "intent": "get_pet_tasks"}
+{"utterance": "What does Mochi need today?", "intent": "get_pet_tasks"}
+{"utterance": "Are there any conflicts or overlaps?", "intent": "detect_conflicts"}
+{"utterance": "Did I double book anything?", "intent": "detect_conflicts"}
+{"utterance": "Is anything scheduled at the same time?", "intent": "detect_conflicts"}
+{"utterance": "Check my schedule for conflicts", "intent": "detect_conflicts"}
+{"utterance": "When should I take Mochi out?", "intent": "suggest_time"}
+{"utterance": "Find a time for a 45 minute grooming", "intent": "suggest_time"}
+{"utterance": "What's the next free slot?", "intent": "suggest_time"}
+{"utterance": "Suggest a time for the vet visit", "intent": "suggest_time"}
+{"utterance": "When is Mochi free?", "intent": "suggest_time"}
+{"utterance": "How often should I feed my cat?", "intent": "care_question"}
+{"utterance": "How much food does a puppy need?", "intent": "care_question"}
+{"utterance": "Is it safe to give my dog cheese?", "intent": "care_question"}
+{"utterance": "Can rabbits eat lettuce?", "intent": "care_question"}
+{"utterance": "What vaccines does a kitten need?", "intent": "care_question"}
+{"utterance": "How much exercise does a border collie need?", "intent": "care_question"}
+{"utterance": "My cat has been throwing up, is that normal?", "intent": "care_question"}
+{"utterance": "What foods are toxic to birds?", "intent": "care_question"}
+{"utterance": "How do I train a puppy not to bite?", "intent": "care_question"}
+{"utterance": "Should I bathe my cat?", "intent": "care_question"}
+{"utterance": "Hello there", "intent": "general_chat"}
+{"utterance": "Hi!", "intent": "general_chat"}
+{"utterance": "Thanks, that's helpful", "intent": "general_chat"}
+{"utterance": "What can you do?", "intent": "general_chat"}
+{"utterance": "Can you help with Mochi?", "intent": "general_chat"}
+{"utterance": "I'm worried about my cat", "intent": "care_question"}

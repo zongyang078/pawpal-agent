@@ -34,9 +34,19 @@ class TestSearch:
 
     def test_results_are_capped_at_top_k(self):
         """top_k bounds how many documents are quoted back."""
-        one = self.kb.search("dog", top_k=1)
-        three = self.kb.search("dog", top_k=3)
-        assert len(one) < len(three)
+        assert len(self.kb.rank("dog feeding grooming", top_k=1)) == 1
+        assert len(self.kb.rank("dog feeding grooming", top_k=3)) == 3
+
+    def test_species_only_query_still_returns_that_species(self):
+        """Species words are excluded from scoring, but not when they are all there is."""
+        titles = [doc.title for _, doc in self.kb.rank("dog", top_k=3)]
+        assert titles, "a bare species query should not come back empty"
+        assert all("dog" in t.lower() for t in titles)
+
+    def test_content_terms_outrank_species_terms(self):
+        """The discriminating word decides, not the species word's frequency."""
+        top = self.kb.rank("my dog has been vomiting for two days", top_k=1)
+        assert top[0][1].title == "Common dog health symptoms"
 
 
 class TestCustomCorpus:
