@@ -4,7 +4,9 @@ import json
 
 import pytest
 
-from cli import main
+import cli
+from cli import build_agent, describe_mode, main
+from pawpal_system import Owner
 
 
 @pytest.fixture
@@ -87,3 +89,52 @@ class TestAsk:
         with open(custom) as f:
             assert json.load(f)["pets"][0]["name"] == "Mochi"
         assert not (tmp_path / "data.json").exists(), "state leaked to the cwd default"
+
+
+class TestProviderFlag:
+    """--provider exists so both providers can be verified without editing .env.
+
+    These check selection only. Running a turn would reach the network, and the
+    suite is hermetic by design -- the adapters themselves are covered in
+    test_llm.py against captured response shapes.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _both_keys(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-claude")
+        for var in ("OPENAI_MODEL", "ANTHROPIC_MODEL", "PAWPAL_MODEL"):
+            monkeypatch.delenv(var, raising=False)
+
+    def test_is_offered_in_help(self, capsys):
+        with pytest.raises(SystemExit):
+            main(["--help"])
+        assert "--provider" in capsys.readouterr().out
+
+    def test_rejects_an_unknown_provider(self, capsys):
+        with pytest.raises(SystemExit):
+            main(["--provider", "ollama", "pets"])
+        assert "invalid choice" in capsys.readouterr().err
+
+    def test_default_picks_anthropic_when_both_keys_are_set(self):
+        assert build_agent(Owner(name="T")).api_provider == "anthropic"
+
+    def test_openai_can_be_forced(self):
+        agent = build_agent(Owner(name="T"), "openai")
+        assert agent.api_provider == "openai"
+        assert agent.use_llm is True, "forcing a provider must still find its key"
+
+    def test_describe_mode_names_the_forced_provider(self):
+        assert describe_mode(build_agent(Owner(name="T"), "openai")).startswith("openai:")
+
+    def test_the_flag_reaches_build_agent(self, data_file, monkeypatch):
+        """The argparse wiring, with the provider neutralised so nothing dials out."""
+        seen = []
+        monkeypatch.setattr(
+            cli, "build_agent",
+            lambda owner, provider=None: (seen.append(provider), build_agent(owner, "nope"))[1],
+        )
+
+        main(["--data", data_file, "--provider", "openai", "ask", "hi"])
+
+        assert seen == ["openai"]

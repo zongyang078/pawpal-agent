@@ -24,6 +24,7 @@ from llm import (
     ToolResultsTurn,
     UserTurn,
     build_client,
+    key_for_provider,
     model_from_env,
     provider_from_env,
 )
@@ -258,3 +259,71 @@ class TestModelOverride:
 
         agent = PawPalAgent(owner=Owner(name="T"), model="from-argument")
         assert agent.model == "from-argument"
+
+
+class TestProviderKeyPairing:
+    """Provider and key must always be read together.
+
+    Reading them by separate rules is what sent an OpenAI key to Anthropic's
+    endpoint: `OPENAI_API_KEY or ANTHROPIC_API_KEY` picked the first key that
+    existed while a different expression picked the provider.
+    """
+
+    BOTH = {"OPENAI_API_KEY": "sk-openai", "ANTHROPIC_API_KEY": "sk-ant-claude"}
+
+    def test_key_belongs_to_the_provider_asked_for(self):
+        assert key_for_provider("openai", self.BOTH) == "sk-openai"
+        assert key_for_provider("anthropic", self.BOTH) == "sk-ant-claude"
+
+    def test_unknown_provider_has_no_key(self):
+        assert key_for_provider("ollama", self.BOTH) is None
+
+    def test_missing_key_is_none(self):
+        assert key_for_provider("openai", {"ANTHROPIC_API_KEY": "sk-ant"}) is None
+
+    def test_env_choice_returns_a_matching_pair(self):
+        """Whatever it picks, the key must be that provider's own."""
+        for env in (self.BOTH, {"OPENAI_API_KEY": "sk-openai"},
+                    {"ANTHROPIC_API_KEY": "sk-ant-claude"}):
+            provider, key = provider_from_env(env)
+            assert key == key_for_provider(provider, env)
+
+
+class TestExplicitProvider:
+    """--provider has to work when both keys are set; that is its whole point."""
+
+    BOTH = {"OPENAI_API_KEY": "sk-openai", "ANTHROPIC_API_KEY": "sk-ant-claude"}
+
+    @pytest.fixture(autouse=True)
+    def _both_keys(self, monkeypatch):
+        for var, value in self.BOTH.items():
+            monkeypatch.setenv(var, value)
+        for var in ("OPENAI_MODEL", "ANTHROPIC_MODEL", "PAWPAL_MODEL"):
+            monkeypatch.delenv(var, raising=False)
+
+    def _agent(self, provider):
+        from agent import PawPalAgent
+        from pawpal_system import Owner
+
+        return PawPalAgent(owner=Owner(name="T"), api_provider=provider)
+
+    def test_default_prefers_anthropic(self):
+        assert self._agent(None).api_provider == "anthropic"
+
+    def test_openai_can_be_forced(self):
+        """Previously this silently produced rule-based mode: the explicit
+        provider disagreed with the environment, so no key was looked up."""
+        agent = self._agent("openai")
+        assert agent.use_llm is True
+        assert agent.api_provider == "openai"
+        assert agent.llm_client.api_key == "sk-openai"
+
+    def test_anthropic_can_be_forced(self):
+        agent = self._agent("anthropic")
+        assert agent.llm_client.api_key == "sk-ant-claude"
+
+    def test_forcing_a_provider_without_its_key_degrades(self, monkeypatch):
+        monkeypatch.delenv("OPENAI_API_KEY")
+        agent = self._agent("openai")
+        assert agent.use_llm is False
+        assert agent.api_provider == "rule-based"

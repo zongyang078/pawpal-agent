@@ -332,15 +332,32 @@ def build_client(
     return AnthropicClient(api_key=api_key, model=model)
 
 
-def provider_from_env(env: dict) -> tuple[str, str | None]:
-    """Pick a provider and key from environment variables.
+PROVIDER_KEY_VARS = {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "openai": "OPENAI_API_KEY",
+}
 
-    Checks Anthropic first so that setting ANTHROPIC_API_KEY alone selects
-    Anthropic -- the old code took whichever key existed but left the provider
-    at its "openai" default, sending an Anthropic key to OpenAI.
+
+def key_for_provider(provider: str, env: dict) -> str | None:
+    """The key belonging to `provider`, or None.
+
+    Provider and key must always be read together. Choosing them by separate
+    rules is what sent an OpenAI key to Anthropic's endpoint: one expression
+    picked the first key that existed, another picked the provider by whether
+    a different variable was set.
     """
-    if env.get("ANTHROPIC_API_KEY"):
-        return "anthropic", env["ANTHROPIC_API_KEY"]
-    if env.get("OPENAI_API_KEY"):
-        return "openai", env["OPENAI_API_KEY"]
+    var = PROVIDER_KEY_VARS.get(provider)
+    return env.get(var) if var else None
+
+
+def provider_from_env(env: dict) -> tuple[str, str | None]:
+    """Pick a provider and its own key from the environment.
+
+    Anthropic is checked first, so setting ANTHROPIC_API_KEY alone selects
+    Anthropic. When both are set, pass an explicit provider to choose.
+    """
+    for provider in PROVIDER_KEY_VARS:
+        key = key_for_provider(provider, env)
+        if key:
+            return provider, key
     return "openai", None
