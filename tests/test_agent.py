@@ -284,7 +284,34 @@ class TestProviderDegradation:
 
         assert [tc["name"] for tc in response.tool_calls_made] == ["search_care_info"]
         assert len(response.message) > 50
-        assert "falling back to rule-based" in capsys.readouterr().out
+        assert capsys.readouterr().err == "", "the agent reports, it does not print"
+
+    def test_degradation_is_reported_not_hidden(self, owner: Owner):
+        """The demo-day failure: a provider that never works, invisibly.
+
+        The answer still arrives, so nothing looks wrong unless the fallback
+        is reported in the response itself.
+        """
+        agent = PawPalAgent(owner=owner, llm_client=FailingClient("401 invalid key"))
+
+        response = agent.process("How much should I feed my dog?")
+
+        assert response.degraded_reason is not None
+        assert "401" in response.degraded_reason
+        assert agent.last_degraded_reason == response.degraded_reason
+
+    def test_a_working_turn_reports_no_degradation(self, owner: Owner):
+        agent = PawPalAgent(owner=owner, llm_client=FakeClient([LLMResponse(text="ok")]))
+        assert agent.process("hi").degraded_reason is None
+
+    def test_degradation_does_not_persist_into_the_next_turn(self, owner: Owner):
+        """A recovered provider must clear the warning, not leave it stuck on."""
+        agent = PawPalAgent(owner=owner, llm_client=FailingClient())
+        assert agent.process("hi").degraded_reason is not None
+
+        agent.llm_client = FakeClient([LLMResponse(text="back online")])
+        assert agent.process("hi").degraded_reason is None
+        assert agent.last_degraded_reason is None
 
     def test_no_client_means_rule_based_mode(self, owner: Owner):
         agent = PawPalAgent(owner=owner, api_key=None, api_provider="openai")
@@ -297,3 +324,35 @@ class TestProviderDegradation:
         assert agent.use_llm is True
         assert agent.api_provider == "fake"
         assert agent.model == "fake-model"
+
+
+class TestConfidenceReporting:
+    """Confidence has to distinguish "chose not to call a tool" from "matched
+    nothing", or good LLM answers get flagged as low confidence."""
+
+    def test_llm_text_answer_is_not_flagged(self, owner: Owner):
+        agent = PawPalAgent(
+            owner=owner, llm_client=FakeClient([LLMResponse(text="Hi! How can I help?")])
+        )
+
+        response = agent.process("hi")
+
+        assert response.confidence > 0.5
+        assert not any("Low confidence" in w for w in response.guardrail_warnings)
+
+    def test_rule_based_fallthrough_is_flagged(self, owner: Owner):
+        agent = PawPalAgent(owner=owner, use_llm=False)
+
+        response = agent.process("hi")
+
+        assert response.confidence == 0.3
+        assert any("Low confidence" in w for w in response.guardrail_warnings)
+
+    def test_a_degraded_turn_is_scored_as_rule_based(self, owner: Owner):
+        """The LLM did not answer it, whatever the configuration says."""
+        agent = PawPalAgent(owner=owner, llm_client=FailingClient())
+
+        response = agent.process("hi")
+
+        assert response.degraded_reason is not None
+        assert response.confidence == 0.3

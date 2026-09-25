@@ -17,6 +17,7 @@ import sys
 from datetime import date
 
 from agent import PawPalAgent
+from llm import PROVIDER_KEY_VARS
 from pawpal_system import Owner, Pet, Scheduler, Task
 
 DEFAULT_DATA_PATH = "data.json"
@@ -27,9 +28,9 @@ def load_owner(path: str) -> Owner:
     return Owner.load_from_json(path) or Owner(name="Pet Parent", data_path=path)
 
 
-def build_agent(owner: Owner) -> PawPalAgent:
-    """Wire up an agent. Provider and key come from the environment."""
-    return PawPalAgent(owner=owner)
+def build_agent(owner: Owner, provider: str | None = None) -> PawPalAgent:
+    """Wire up an agent. Without a provider, the environment chooses one."""
+    return PawPalAgent(owner=owner, api_provider=provider)
 
 
 def describe_mode(agent: PawPalAgent) -> str:
@@ -41,6 +42,15 @@ def print_response(agent: PawPalAgent, message: str, *, show_trace: bool) -> Non
     """Run one turn through the agent and print the result."""
     response = agent.process(message)
     print(response.message)
+
+    # Always reported, not just under --trace: an answer that looks fine while
+    # the provider is down is the failure mode worth shouting about.
+    if response.degraded_reason:
+        print(
+            f"  ! {agent.api_provider} call failed, answered in rule-based mode:"
+            f"\n    {response.degraded_reason}",
+            file=sys.stderr,
+        )
 
     if show_trace:
         # Printed even with no tool calls: it is the quickest way to confirm a
@@ -57,7 +67,7 @@ def print_response(agent: PawPalAgent, message: str, *, show_trace: bool) -> Non
 def cmd_ask(args: argparse.Namespace) -> int:
     """Answer a single question and exit."""
     owner = load_owner(args.data)
-    agent = build_agent(owner)
+    agent = build_agent(owner, args.provider)
     print_response(agent, args.message, show_trace=args.trace)
     owner.save_to_json()
     return 0
@@ -66,7 +76,7 @@ def cmd_ask(args: argparse.Namespace) -> int:
 def cmd_chat(args: argparse.Namespace) -> int:
     """Run an interactive session until EOF or 'exit'."""
     owner = load_owner(args.data)
-    agent = build_agent(owner)
+    agent = build_agent(owner, args.provider)
     print(f"PawPal+ ({describe_mode(agent)}). Ctrl-D or 'exit' to quit.\n")
 
     while True:
@@ -154,6 +164,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="pawpal", description="PawPal+ pet care assistant.")
     parser.add_argument("--data", default=DEFAULT_DATA_PATH,
                         help=f"path to the JSON data file (default: {DEFAULT_DATA_PATH})")
+    parser.add_argument("--provider", choices=sorted(PROVIDER_KEY_VARS),
+                        help="force a provider instead of letting the environment pick; "
+                             "useful when both keys are set")
     sub = parser.add_subparsers(dest="command", required=True)
 
     ask = sub.add_parser("ask", help="ask the agent a single question")

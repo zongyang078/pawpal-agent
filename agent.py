@@ -27,6 +27,7 @@ from llm import (
     Turn,
     UserTurn,
     build_client,
+    key_for_provider,
     model_from_env,
     provider_from_env,
 )
@@ -90,6 +91,9 @@ class AgentResponse:
     tool_calls_made: list[dict] = field(default_factory=list)
     confidence: float = 0.0
     guardrail_warnings: list[str] = field(default_factory=list)
+    # Why this turn fell back to rule-based dispatch, if it did. A provider
+    # failure must not be able to hide behind an answer that still looks fine.
+    degraded_reason: str | None = None
 
 
 class PawPalAgent:
@@ -121,14 +125,24 @@ class PawPalAgent:
         if llm_client is not None:
             self.llm_client = llm_client
         else:
-            env_provider, env_key = provider_from_env(os.environ)
-            provider = api_provider or env_provider
-            key = api_key or (env_key if api_provider in (None, env_provider) else None)
+            if api_provider:
+                # An explicit provider must read its own key, not whichever
+                # the environment would have picked on its own.
+                provider = api_provider
+                key = api_key or key_for_provider(provider, os.environ)
+            else:
+                provider, key = provider_from_env(os.environ)
+                key = api_key or key
+
             self.llm_client = build_client(
                 provider, key, model or model_from_env(provider, os.environ)
             )
 
         self.use_llm = use_llm and self.llm_client is not None
+
+        # Set when a turn falls back because the provider failed. Survives
+        # until the next turn so the UI can render it after its rerun.
+        self.last_degraded_reason: str | None = None
 
     @property
     def api_provider(self) -> str:
@@ -153,6 +167,7 @@ class PawPalAgent:
         6. Return response
         """
         # Step 1: Detect intent
+        self.last_degraded_reason = None
         intent = self._detect_intent(user_message)
 
         # Start logging
@@ -187,18 +202,24 @@ class PawPalAgent:
 
             tool_results = [tc.get("result", "") for tc in tool_calls]
 
-            # Step 4: Self-check via guardrails
+            # Step 4: Self-check via guardrails. Confidence is computed here
+            # because only this layer knows whether the model produced the
+            # answer or the rule-based path did.
+            confidence = compute_confidence(
+                tool_results,
+                llm_answered=self.use_llm and self.last_degraded_reason is None,
+            )
             post_check = run_all_checks(
                 user_message=user_message,
                 agent_response=response_text,
                 tool_results=tool_results,
                 pet_species=self._get_current_species(),
+                confidence=confidence,
             )
 
             if post_check.modified_response:
                 response_text = post_check.modified_response
 
-            confidence = compute_confidence(tool_results, user_message)
 
             # Step 5: Log everything
             for tc in tool_calls:
@@ -217,6 +238,7 @@ class PawPalAgent:
                 tool_calls_made=tool_calls,
                 confidence=confidence,
                 guardrail_warnings=post_check.warnings,
+                degraded_reason=self.last_degraded_reason,
             )
 
         except Exception as e:
@@ -357,7 +379,11 @@ class PawPalAgent:
         try:
             return self._react(user_message)
         except LLMError as e:
-            print(f"LLM call failed ({e}), falling back to rule-based mode.")
+            # Recorded, not printed: a library writing to stderr gives the
+            # caller no way to render the failure, which is how this one hid
+            # behind a green "LLM mode" badge. Both front ends surface
+            # degraded_reason instead.
+            self.last_degraded_reason = str(e)
             return self._rule_based_act(user_message, intent)
 
     def _react(self, user_message: str) -> tuple[str, list[dict]]:
