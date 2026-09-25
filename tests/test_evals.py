@@ -188,3 +188,19 @@ class TestSuites:
         out = capsys.readouterr().out
         assert "RETRIEVAL" in out
         assert "INTENT DETECTION" not in out
+
+
+class TestRetrievalPrecision:
+    """Precision was added after recall alone missed a cross-species ranker."""
+
+    def test_all_relevant_scores_one(self):
+        assert retrieval_report([("q", ["A", "B"], ["A", "B"])]).precision == 1.0
+
+    def test_partially_relevant(self):
+        report = retrieval_report([("q", ["A"], ["A", "B", "C"])])
+        assert report.recall_at_1 == 1.0, "recall cannot see the two bad results"
+        assert report.precision == pytest.approx(1 / 3)
+
+    def test_empty_result_set_scores_zero(self):
+        """Returning nothing must not look like perfect precision."""
+        assert retrieval_report([("q", ["A"], [])]).precision == 0.0

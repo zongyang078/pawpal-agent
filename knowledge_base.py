@@ -286,7 +286,6 @@ class KnowledgeBase:
 
     TITLE_BOOST = 3.0
     SPECIES_MATCH_BOOST = 1.5
-    SPECIES_MISMATCH_PENALTY = 0.3
 
     def _tf_idf_score(self, query_tokens: list[str], doc: Document) -> float:
         """Compute TF-IDF relevance score between query and document.
@@ -300,6 +299,12 @@ class KnowledgeBase:
         word "dog" alone contributed 62% of the score of "Dog feeding
         guidelines", which beat the health article that actually contains
         "vomiting". Ranking should turn on the terms that discriminate.
+
+        A document about the wrong species scores zero rather than being
+        merely penalised. In this domain that is a safety property, not a
+        precision tweak: avocado is harmless to a cat and toxic to a bird, so
+        answering a parrot question with the cat article is worse than
+        answering it with nothing.
         """
         title_tokens = self._tokenize(doc.title)
         content_tokens = self._tokenize(doc.content)
@@ -317,6 +322,8 @@ class KnowledgeBase:
         query_species = {
             self.SPECIES_TERMS[qt] for qt in query_tokens if qt in self.SPECIES_TERMS
         }
+        if query_species and not query_species & set(doc.species):
+            return 0.0
 
         # A query of nothing but species words ("dog") has no discriminating
         # terms to score, so fall back to scoring the species words themselves
@@ -334,10 +341,7 @@ class KnowledgeBase:
                 score += base
 
         if query_species:
-            if query_species & set(doc.species):
-                score *= self.SPECIES_MATCH_BOOST
-            else:
-                score *= self.SPECIES_MISMATCH_PENALTY
+            score *= self.SPECIES_MATCH_BOOST
 
         return score
 

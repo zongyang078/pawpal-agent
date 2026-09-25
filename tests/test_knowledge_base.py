@@ -34,8 +34,19 @@ class TestSearch:
 
     def test_results_are_capped_at_top_k(self):
         """top_k bounds how many documents are quoted back."""
-        assert len(self.kb.rank("dog feeding grooming", top_k=1)) == 1
-        assert len(self.kb.rank("dog feeding grooming", top_k=3)) == 3
+        query = "dog feeding grooming exercise vaccines"
+        assert len(self.kb.rank(query, top_k=1)) == 1
+        assert len(self.kb.rank(query, top_k=3)) == 3
+
+    def test_wrong_species_documents_are_excluded(self):
+        """Cross-species answers are a safety problem, not just noise:
+        avocado is harmless to a cat and toxic to a bird."""
+        for _, doc in self.kb.rank("what should I feed my dog", top_k=3):
+            assert "dog" in doc.species, f"{doc.title} is not about dogs"
+
+        assert self.kb.rank("what should I feed my parrot", top_k=3) == [], (
+            "no bird article mentions feeding, so nothing is better than the cat one"
+        )
 
     def test_species_only_query_still_returns_that_species(self):
         """Species words are excluded from scoring, but not when they are all there is."""

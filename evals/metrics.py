@@ -114,6 +114,7 @@ class RetrievalReport:
     recall_at_1: float
     recall_at_3: float
     mrr: float
+    precision: float = 0.0
     misses: list[tuple[str, list[str], list[str]]] = field(default_factory=list)
 
 
@@ -124,12 +125,18 @@ def retrieval_report(
 
     A query counts as hit@k if any relevant document appears in the top k.
     Reciprocal rank is 1/position of the first relevant document, 0 if absent.
+
+    Precision is the share of returned documents that are relevant, averaged
+    over queries. Recall alone cannot see a ranker that answers a dog question
+    with the right article plus two about other species -- which is exactly
+    what this suite missed until the results were looked at by hand.
     """
     if not items:
         return RetrievalReport(0.0, 0.0, 0.0)
 
     hits_1 = hits_3 = 0
     reciprocal_ranks = []
+    precisions = []
     misses = []
 
     for query, relevant, ranked in items:
@@ -144,11 +151,17 @@ def retrieval_report(
         else:
             misses.append((query, relevant, ranked))
         reciprocal_ranks.append(1 / position if position else 0.0)
+        # An empty result set is neither precise nor imprecise; score it 0 so
+        # returning nothing cannot be gamed into a perfect precision.
+        precisions.append(
+            len([t for t in ranked if t in relevant_set]) / len(ranked) if ranked else 0.0
+        )
 
     n = len(items)
     return RetrievalReport(
         recall_at_1=hits_1 / n,
         recall_at_3=hits_3 / n,
         mrr=sum(reciprocal_ranks) / n,
+        precision=sum(precisions) / n,
         misses=misses,
     )

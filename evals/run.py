@@ -109,7 +109,7 @@ def print_intent(report: ClassificationReport, show_errors: bool) -> None:
 def print_retrieval(report: RetrievalReport, show_errors: bool) -> None:
     print("\nRETRIEVAL")
     print(f"  recall@1 {pct(report.recall_at_1)}   recall@3 {pct(report.recall_at_3)}"
-          f"   MRR {report.mrr:.3f}")
+          f"   precision {pct(report.precision)}   MRR {report.mrr:.3f}")
     if show_errors and report.misses:
         print(f"\n  {len(report.misses)} queries with no relevant document in the top 3:")
         for query, relevant, ranked in report.misses:
@@ -150,6 +150,7 @@ def to_dict(intent, retrieval, guardrails) -> dict:
         "retrieval": {
             "recall_at_1": retrieval.recall_at_1,
             "recall_at_3": retrieval.recall_at_3,
+            "precision": retrieval.precision,
             "mrr": retrieval.mrr,
             "misses": [
                 {"query": q, "expected": rel, "got": got}
