@@ -102,12 +102,16 @@ class TestResetSession:
     def test_rebuilds_the_agent_and_clears_history(self, app):
         app.chat_input[0].set_value("Add Mochi, a dog").run()
         app.chat_input[0].set_value("What's on today's schedule?").run()
-        before = id(app.session_state.agent)
         assert len(app.chat_message) > 1
+
+        # Hold the old agent, rather than comparing id() across the reset:
+        # ids are only unique among live objects, and CPython reuses the
+        # address of the freed agent often enough to fail intermittently.
+        old_agent = app.session_state.agent
 
         next(b for b in app.sidebar.button if b.label == "Reset session").click().run()
 
-        assert id(app.session_state.agent) != before
+        assert app.session_state.agent is not old_agent
         assert app.session_state.agent.logger.get_summary()["total_interactions"] == 0
         assert len(app.chat_message) == 1, "only the welcome message should remain"
 
