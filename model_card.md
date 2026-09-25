@@ -13,7 +13,7 @@ falls back to keyword-based dispatch when no API key is configured.
 
 | | |
 |---|---|
-| Reasoning | OpenAI (`gpt-4o-mini`) or Anthropic (`claude-sonnet-4-20250514`), behind one adapter protocol |
+| Reasoning | OpenAI or Anthropic behind one adapter protocol; defaults `gpt-4o-mini` / `claude-sonnet-5`, overridable by env |
 | Fallback | Deterministic keyword intent detection, no API required |
 | Tools | 8, exposed as JSON Schema function definitions |
 | Retrieval | Hand-rolled TF-IDF over 14 documents, no embeddings |
@@ -134,8 +134,8 @@ LLM mode — only the deterministic components.
 Intent detection at 68% is measured and left unfixed: it governs only the
 no-API-key path, and the effort went to the safety layer first.
 
-What does exist beyond this is a deterministic test suite: 185 tests across 9
-modules at 83%
+What does exist beyond this is a deterministic test suite: 207 tests across 10
+modules at 89%
 line coverage, with guardrails at 99% and the domain layer at 98%. The reasoning
 loop is exercised against a scripted client, so multi-step tool chains, the
 iteration cap, tool failures, and provider outages are covered without a

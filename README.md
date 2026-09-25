@@ -46,15 +46,15 @@ post-flight guardrails → confidence scoring → logging.
 | [`agent.py`](agent.py) | Reasoning loop. Plans and executes tools, self-checks the result. Two modes: LLM function calling, or keyword dispatch when no API key is set. |
 | [`llm.py`](llm.py) | Provider abstraction. One neutral transcript protocol, one adapter per vendor, plus `FakeClient` for tests. The loop in `agent.py` is provider-agnostic. |
 | [`tools.py`](tools.py) | Eight tools as JSON Schema function definitions: `add_pet`, `add_task`, `complete_task`, `get_schedule`, `get_pet_tasks`, `detect_conflicts`, `suggest_time_slot`, `search_care_info`. |
-| [`knowledge_base.py`](knowledge_base.py) | Retrieval over 14 documents in [`knowledge/`](knowledge/). Hand-rolled TF-IDF with stop words, suffix stemming, 3× title boost, and species weighting. Drop in a `.txt` file to extend it. |
+| [`knowledge_base.py`](knowledge_base.py) | Retrieval over 14 documents in [`knowledge/`](knowledge/). Hand-rolled TF-IDF with stop words, suffix stemming, 3× title boost, and a hard species filter. Drop in a `.txt` file to extend it. |
 | [`guardrails.py`](guardrails.py) | Safety checks before and after each response: emergency override, medical disclaimer, toxic food scan, confidence score. |
 | [`logger.py`](logger.py) | Records the full chain per interaction — input, intent, tool calls with arguments and results, guardrail outcome, response. Exports to JSON. |
 | [`pawpal_system.py`](pawpal_system.py) | Domain layer: `Task`, `Pet`, `Owner`, `Scheduler`. Priority scheduling, recurrence, conflict detection, duration-aware slot finding, JSON persistence. |
 | [`cli.py`](cli.py) | Terminal entry point. |
 | [`app.py`](app.py) | Streamlit chat UI, with tool-call and confidence transparency. |
 
-The LLM layer targets OpenAI (`gpt-4o-mini`) and Anthropic
-(`claude-sonnet-4-20250514`) through their native tool-calling APIs. Both are
+The LLM layer targets OpenAI and Anthropic through their native tool-calling
+APIs, defaulting to `gpt-4o-mini` and `claude-sonnet-5`. Both are
 optional: with no key configured the agent runs entirely on keyword dispatch, so
 the system works offline and the test suite never touches the network.
 
@@ -82,7 +82,17 @@ pip install -e ".[dev]"      # drop [dev] to skip pytest/ruff/coverage
 This installs a `pawpal` command; the examples below use `python cli.py` so they
 work without installing.
 
-Optionally export `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` to enable LLM mode.
+Optionally export `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` to enable LLM mode;
+Anthropic wins if both are set. Model names go stale faster than the code
+around them, so the defaults are overridable without an edit:
+
+```bash
+export ANTHROPIC_API_KEY=...          # picks claude-sonnet-5
+export ANTHROPIC_MODEL=claude-opus-5  # or pin something else
+export PAWPAL_MODEL=...               # applies to whichever provider is active
+
+python cli.py ask --trace "hi"        # prints the provider and model in use
+```
 
 ```bash
 python cli.py seed                    # write a sample owner, 2 pets, 6 tasks
@@ -98,47 +108,50 @@ streamlit run app.py                  # chat UI
 ## Testing
 
 ```bash
-pytest                       # 185 tests
+pytest                       # 207 tests
 ruff check .                 # lint
 coverage run -m pytest && coverage report
 ```
 
-185 tests across 9 modules, no network access required:
+207 tests across 10 modules, no network access required:
 
 | Module | Tests | Under test |
 |---|---|---|
 | [`test_agent.py`](tests/test_agent.py) | 34 | Intent detection, ReAct loop, guardrail regressions, degradation |
 | [`test_domain.py`](tests/test_domain.py) | 33 | Task, Pet, Owner, Scheduler, slot finder, persistence |
-| [`test_evals.py`](tests/test_evals.py) | 29 | Metric arithmetic, dataset integrity, harness CLI |
-| [`test_llm.py`](tests/test_llm.py) | 20 | Adapter translation both ways, error mapping, client construction |
+| [`test_evals.py`](tests/test_evals.py) | 32 | Metric arithmetic, dataset integrity, harness CLI |
+| [`test_llm.py`](tests/test_llm.py) | 26 | Adapter translation both ways, error mapping, client construction |
 | [`test_guardrails.py`](tests/test_guardrails.py) | 17 | Toxic food, emergency, referral, confidence |
-| [`test_knowledge_base.py`](tests/test_knowledge_base.py) | 16 | Retrieval, ranking, IDF weighting, corpus loading |
+| [`test_knowledge_base.py`](tests/test_knowledge_base.py) | 17 | Retrieval, ranking, IDF weighting, corpus loading |
 | [`test_tools.py`](tests/test_tools.py) | 17 | Tool schemas, dispatch, persistence failures |
+| [`test_app.py`](tests/test_app.py) | 12 | Streamlit UI driven through `AppTest`: widgets, reruns, reset |
 | [`test_cli.py`](tests/test_cli.py) | 11 | Every subcommand, exit codes, stream routing |
 | [`test_logger.py`](tests/test_logger.py) | 8 | Recording, summary, JSON export |
 
-Line coverage is 83%:
+Line coverage is 89%:
 
 ```
 evals/metrics.py  100%    guardrails.py      99%    pawpal_system.py   98%
-knowledge_base.py  96%    llm.py             94%    logger.py          88%
-evals/run.py       87%    tools.py           84%    cli.py             83%
-agent.py           74%    app.py              0%
+knowledge_base.py  96%    llm.py             94%    app.py             91%
+tools.py           90%    logger.py          88%    evals/run.py       87%
+cli.py             84%    agent.py           73%
 ```
 
 The ReAct loop is covered against `FakeClient`: multi-step tool chains, parallel
 calls in one reply, the iteration cap, tool failures coming back as
-observations, and the fallback to rule-based mode when a provider raises. What
-remains uncovered in `agent.py` is the rule-based parameter extraction — the
-`_extract_*` and `_guess_*` helpers, which is also where its remaining defects
-live (see Still outstanding).
+observations, and the fallback to rule-based mode when a provider raises. The
+Streamlit app is driven through Streamlit's own `AppTest` — widgets, session
+state, reruns — because the last two bugs surfaced by using the UI while the
+unit suite and the eval harness were both green. What remains uncovered in
+`agent.py` is the rule-based parameter extraction, the `_extract_*` and
+`_guess_*` helpers, which is also where its remaining defects live.
 
 ## Evaluation
 
 ```bash
 python -m evals.run                 # all suites
 python -m evals.run --show-errors   # every failing case
-python -m evals.run --fail-under 0.9
+python -m evals.run --fail-under 0.65   # what CI gates on
 ```
 
 125 labelled cases, run offline against the rule-based path — no API key, no
@@ -147,7 +160,7 @@ network, reproducible:
 | Suite | Metric | Score | n |
 |---|---|---|---|
 | Intent detection | accuracy | 68.0% | 50 |
-| Retrieval | recall@1 / recall@3 / MRR | 91.2% / 94.1% / 0.926 | 34 |
+| Retrieval | recall@1 / recall@3 / precision / MRR | 91.2% / 94.1% / 74.5% / 0.926 | 34 |
 | Guardrail: emergency | recall / FPR | 100% / 0% | 18 |
 | Guardrail: vet referral | recall / FPR | 100% / 0% | 11 |
 | Guardrail: toxic food | recall / FPR | 100% / 0% | 12 |
@@ -175,6 +188,16 @@ least one in-vocabulary content word. Found by using the app, not by the
 suite. Retrieval now falls back to the species the query named, and the four
 cases that exposed it are in the dataset.
 
+*Recall was also measuring the wrong thing.* "How often should I feed my dog?"
+scored a perfect recall@1 while returning the dog article followed by the cat
+and hamster ones — a wrong-species penalty of ×0.3 was not enough to push them
+out. In this domain that is a safety bug rather than untidiness: avocado is
+harmless to a cat and toxic to a bird. Wrong-species documents are now dropped
+outright, and **precision** joined the metrics, because recall structurally
+cannot see this class of failure. Recall was unchanged at 91.2 / 94.1;
+precision went from 59.3% to 74.5%, and the average result set shrank from 2.21
+documents to 1.68.
+
 **Read the guardrail scores with suspicion.** They were tuned against these
 same 41 cases, so 100% is a statement about this set, not about English. The
 number worth trusting is the direction of the change and the class of bug it
@@ -189,9 +212,10 @@ which is why the effort went to the safety layer first.
 
 Retrieval's two remaining misses are vocabulary gaps, not ranking bugs: "what
 shots does my puppy need" fails because the corpus says "vaccines", and "what
-should I feed my parrot" because the bird article never uses the word "feed".
-That is the ceiling of lexical matching, and it is where embeddings would
-actually earn their cost.
+should I feed my parrot" returns nothing at all because the bird article never
+uses the word "feed" and the cat one is now correctly refused. That is the
+ceiling of lexical matching, and it is where embeddings would actually earn
+their cost.
 
 ## Design decisions
 
@@ -202,7 +226,7 @@ capability means registering a tool rather than changing a prompt. A
 retrieval-only design could answer questions but could not *do* anything.
 
 **Dual mode, LLM and rule-based.** The fallback is not a toy: it handles the
-eight intent categories directly, which makes the system runnable with no
+nine intent categories directly, which makes the system runnable with no
 credentials and makes the whole test suite hermetic. It buys reproducibility at
 the cost of recall on indirect phrasing — a trade-off that shows up plainly in
 the model card's limitations.
@@ -260,16 +284,26 @@ split — see Evaluation.
 
 Also: tool results are returned as strings, so the agent cannot branch on
 failure programmatically; no timeouts, retries, or cost ceilings on provider
-calls; magic numbers in place of configuration; and the rule-based parameter
-extraction is weak — `_extract_pet_info("Yesterday I adopted a dog, Rex")`
-returns "Yesterday" as the name, because it takes the first capitalised word.
+calls; and the rule-based parameter extraction is weak —
+`_extract_pet_info("Yesterday I adopted a dog, Rex")` returns "Yesterday" as
+the name, because it takes the first capitalised word.
 
 ## Screenshots
 
 | | |
 |---|---|
-| ![Chat](assets/demo_chat.png) | ![Schedule](assets/demo_schedule.png) |
-| ![Retrieval](assets/demo_rag.png) | ![Emergency](assets/demo_emergency.png) |
+| **Adding a pet and scheduling** — tool calls are shown, not hidden<br>![Chat](assets/demo_chat.png) | **Today's schedule**, priority first<br>![Schedule](assets/demo_schedule.png) |
+| **Retrieval** — one article, because cross-species answers are refused<br>![Retrieval](assets/demo_rag.png) | **Emergency** — the response is replaced, and no tool runs<br>![Emergency](assets/demo_emergency.png) |
+
+The sidebar carries the live state: which provider is active, every pet with its
+pending count, and a running tally of tool calls and guardrail triggers. Reset
+rebuilds the agent from the current code, which matters because the agent lives
+in session state and a plain rerun would keep the old instance.
+
+<img src="assets/demo_sidebar.png" width="280" alt="Sidebar">
+
+*Screenshots are taken in rule-based mode, so every response above is produced
+with no API key and no network.*
 
 ## Project structure
 
@@ -286,7 +320,7 @@ pawpal-agent/
 ├── app.py                # Streamlit chat UI
 ├── knowledge/            # 14 care documents (.txt)
 ├── evals/                # labelled datasets, metrics, harness
-├── tests/                # 185 tests across 9 modules
+├── tests/                # 207 tests across 10 modules
 ├── assets/               # architecture diagram, screenshots
 ├── model_card.md         # intended use, limitations, safety gaps
 ├── pyproject.toml        # deps, ruff, pytest, coverage config

@@ -8,7 +8,6 @@ the eval harness were both green at the time.
 from pathlib import Path
 
 import pytest
-
 from streamlit.testing.v1 import AppTest
 
 APP_PATH = Path(__file__).resolve().parent.parent / "app.py"
