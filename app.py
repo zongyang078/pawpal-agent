@@ -19,6 +19,8 @@ st.caption("AI-powered pet care assistant — chat naturally to manage your pets
 
 
 # --- Session state initialization ---
+SESSION_KEYS = ("owner", "agent", "messages")
+
 if "owner" not in st.session_state:
     # Try to load from saved data
     loaded = Owner.load_from_json()
@@ -92,6 +94,19 @@ with st.sidebar:
     if st.button("Save Pet Data"):
         owner.save_to_json()
         st.success("Saved to data.json")
+
+    st.divider()
+
+    # The agent lives in session state, so a rerun keeps the instance that was
+    # built when the session started -- edits to retrieval or the guardrails do
+    # not take effect until it is rebuilt. Streamlit's own "Rerun" does not do
+    # that; this does. Pets survive, because they are reloaded from disk.
+    if st.button("Reset session", help="Rebuild the agent from the current code"):
+        owner.save_to_json()
+        for key in SESSION_KEYS:
+            st.session_state.pop(key, None)
+        st.rerun()
+    st.caption("Clears chat history and reloads the code. Pets are kept.")
 
 
 # --- Chat display ---
