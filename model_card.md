@@ -109,13 +109,13 @@ have to, and the tables remain English-only.
 
 ## Evaluation
 
-121 labelled cases, run offline against the rule-based path (`python -m
+125 labelled cases, run offline against the rule-based path (`python -m
 evals.run`):
 
 | Suite | Metric | Score | n |
 |---|---|---|---|
 | Intent detection | accuracy | 68.0% | 50 |
-| Retrieval | recall@1 / recall@3 / MRR | 90.0% / 93.3% / 0.917 | 30 |
+| Retrieval | recall@1 / recall@3 / MRR | 91.2% / 94.1% / 0.926 | 34 |
 | Guardrail: emergency | recall / false-positive rate | 100% / 0% | 18 |
 | Guardrail: vet referral | recall / false-positive rate | 100% / 0% | 11 |
 | Guardrail: toxic food | recall / false-positive rate | 100% / 0% | 12 |
@@ -134,7 +134,7 @@ LLM mode — only the deterministic components.
 Intent detection at 68% is measured and left unfixed: it governs only the
 no-API-key path, and the effort went to the safety layer first.
 
-What does exist beyond this is a deterministic test suite: 182 tests across 9
+What does exist beyond this is a deterministic test suite: 185 tests across 9
 modules at 83%
 line coverage, with guardrails at 99% and the domain layer at 98%. The reasoning
 loop is exercised against a scripted client, so multi-step tool chains, the

@@ -8,7 +8,7 @@ file-based and in-memory logging for testing.
 
 import json
 import os
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import datetime
 
 
@@ -160,7 +160,7 @@ class AgentLogger:
         """Return a human-readable summary string."""
         s = self.get_summary()
         lines = [
-            f"Agent Log Summary",
+            "Agent Log Summary",
             f"  Total interactions: {s['total_interactions']}",
             f"  Total tool calls:   {s['total_tool_calls']}",
             f"  Errors:             {s['errors']}",

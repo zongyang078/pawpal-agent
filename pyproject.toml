@@ -1,0 +1,84 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pawpal-agent"
+version = "0.2.0"
+description = "A pet care scheduling assistant with a natural language interface, tool-calling agent, and a deterministic safety layer."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+
+# Upper bounds are majors, not exact pins: this is an application that should
+# keep working on patch releases, but a major bump of a provider SDK has
+# broken the tool-calling surface before.
+dependencies = [
+    "streamlit>=1.30,<2",
+    "openai>=1.0,<3",
+    "anthropic>=0.30,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<10",
+    "coverage>=7,<8",
+    "ruff>=0.6,<1",
+]
+
+[project.scripts]
+pawpal = "cli:main"
+
+[tool.setuptools]
+# Flat layout: the modules live at the repository root.
+py-modules = [
+    "agent", "app", "cli", "guardrails", "knowledge_base", "llm",
+    "logger", "pawpal_system", "tools",
+]
+
+[tool.setuptools.packages.find]
+include = ["evals*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+# Anything that reaches the network is a bug, not a slow test.
+filterwarnings = ["error::DeprecationWarning:pawpal.*"]
+
+[tool.coverage.run]
+source = ["."]
+omit = ["tests/*", ".venv/*"]
+
+[tool.coverage.report]
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle
+    "F",    # pyflakes
+    "W",    # warnings
+    "I",    # import sorting
+    "UP",   # pyupgrade
+    "B",    # bugbear
+    "C4",   # comprehensions
+    "SIM",  # simplify
+]
+ignore = [
+    "E501",    # line length is handled by the formatter, not the linter
+    "SIM108",  # ternaries are not always clearer than an if/else
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests reach into private helpers on purpose: intent detection and IDF
+# weighting are internal, and testing them through the public surface only
+# would mean asserting on prose.
+"tests/*" = ["SLF001"]

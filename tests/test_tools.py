@@ -93,3 +93,43 @@ class TestExecuteTool:
         """A schema violation surfaces as an error string, not an exception."""
         result = self._run("add_pet", {"wrong_arg": "Luna"})
         assert "Error executing add_pet" in result
+
+
+class TestPersistenceFailures:
+    """A failed save must not abort the tool, but must not be silent either."""
+
+    def setup_method(self):
+        self.owner = Owner(name="Jordan", data_path="/nonexistent-dir/data.json")
+        self.owner.add_pet(Pet(name="Mochi", species="dog"))
+        self.scheduler = Scheduler(owner=self.owner)
+
+    def test_add_pet_still_succeeds_and_warns(self):
+        result = execute_tool(
+            "add_pet", {"name": "Luna", "species": "cat"}, self.owner, self.scheduler
+        )
+        assert "Added Luna" in result
+        assert "could not save" in result
+        assert self.owner.find_pet("Luna") is not None, "in-memory change should stand"
+
+    def test_add_task_still_succeeds_and_warns(self):
+        result = execute_tool(
+            "add_task",
+            {"pet_name": "Mochi", "description": "Walk", "time": "09:00",
+             "duration_minutes": 30},
+            self.owner, self.scheduler,
+        )
+        assert "Added task" in result
+        assert "could not save" in result
+        assert len(self.owner.find_pet("Mochi").tasks) == 1
+
+    def test_complete_task_still_succeeds_and_warns(self):
+        self.owner.find_pet("Mochi").add_task(
+            Task(description="Walk", time="09:00", duration_minutes=30)
+        )
+        result = execute_tool(
+            "complete_task",
+            {"pet_name": "Mochi", "task_description": "Walk"},
+            self.owner, self.scheduler,
+        )
+        assert "Completed" in result
+        assert "could not save" in result

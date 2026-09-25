@@ -36,6 +36,12 @@ from tools import TOOL_DEFINITIONS, execute_tool
 # How many model round trips one turn may take before the loop gives up.
 MAX_REACT_ITERATIONS = 3
 
+# Species the rule-based path can name, and words that are never a pet's name.
+SPECIES_KEYWORDS = ("dog", "cat", "bird", "hamster")
+NAME_STOP_WORDS = frozenset({
+    "add", "new", "my", "pet", "i", "a", "the", "got", "have", "named", "called",
+})
+
 
 # --- Intent categories ---
 
@@ -427,25 +433,29 @@ Guidelines:
     # --- Helper methods for rule-based parameter extraction ---
 
     def _extract_pet_info(self, message: str) -> tuple[str | None, str | None]:
-        """Extract pet name and species from user message."""
-        species_keywords = ["dog", "cat", "bird", "hamster"]
+        """Extract pet name and species from user message.
+
+        The name heuristic is the first capitalised word that is not a species
+        or a filler word, which is wrong often enough to be worth naming:
+        "Yesterday I adopted a dog, Rex" yields "Yesterday".
+        """
         message_lower = message.lower()
 
-        species = None
-        for s in species_keywords:
-            if s in message_lower:
-                species = s
-                break
+        species = next(
+            (s for s in SPECIES_KEYWORDS if s in message_lower), None
+        )
 
-        # Try to extract a capitalized name
-        words = message.split()
         name = None
-        for word in words:
+        for word in message.split():
             cleaned = word.strip(",.!?")
-            if cleaned and cleaned[0].isupper() and cleaned.lower() not in species_keywords:
-                if cleaned.lower() not in ["add", "new", "my", "pet", "i", "a", "the", "got", "have", "named", "called"]:
-                    name = cleaned
-                    break
+            if (
+                cleaned
+                and cleaned[0].isupper()
+                and cleaned.lower() not in SPECIES_KEYWORDS
+                and cleaned.lower() not in NAME_STOP_WORDS
+            ):
+                name = cleaned
+                break
 
         return name, species or "other"
 

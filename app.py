@@ -12,7 +12,6 @@ import streamlit as st
 from agent import PawPalAgent
 from pawpal_system import Owner
 
-
 # --- Page config ---
 st.set_page_config(page_title="PawPal+ Agent", page_icon="🐾", layout="centered")
 st.title("🐾 PawPal+ Agent")
@@ -107,7 +106,7 @@ for msg in st.session_state.messages:
                     st.code(f"Tool: {tc['name']}\nArgs: {tc.get('args', {})}\nResult: {tc.get('result', '')[:200]}")
 
         # Show confidence and warnings
-        if msg["role"] == "assistant" and msg.get("confidence"):
+        if msg["role"] == "assistant" and msg.get("confidence") is not None:
             confidence = msg["confidence"]
             if confidence < 0.4:
                 st.caption(f"⚠️ Low confidence ({confidence:.0%})")
@@ -138,37 +137,11 @@ if not st.session_state.messages:
 
 # --- Chat input ---
 if user_input := st.chat_input("Ask me anything about pet care..."):
-    # Display user message
     st.session_state.messages.append({"role": "user", "content": user_input})
-    with st.chat_message("user"):
-        st.markdown(user_input)
 
-    # Process through agent
-    with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
-            response = agent.process(user_input)
+    with st.spinner("Thinking..."):
+        response = agent.process(user_input)
 
-        st.markdown(response.message)
-
-        # Show tool calls
-        if response.tool_calls_made:
-            with st.expander("Agent reasoning", expanded=False):
-                for tc in response.tool_calls_made:
-                    st.code(
-                        f"Tool: {tc['name']}\n"
-                        f"Args: {tc.get('args', {})}\n"
-                        f"Result: {tc.get('result', '')[:200]}"
-                    )
-
-        # Show confidence
-        if response.confidence < 0.4:
-            st.caption(f"⚠️ Low confidence ({response.confidence:.0%})")
-
-        # Show guardrail warnings
-        for w in response.guardrail_warnings:
-            st.warning(w)
-
-    # Save to session
     st.session_state.messages.append({
         "role": "assistant",
         "content": response.message,
@@ -176,3 +149,10 @@ if user_input := st.chat_input("Ask me anything about pet care..."):
         "confidence": response.confidence,
         "warnings": response.guardrail_warnings,
     })
+
+    # Rerun so the sidebar reflects what this turn changed. Streamlit runs the
+    # script top to bottom, so the sidebar is drawn before this handler ever
+    # executes -- without the rerun, a pet added now only appears in the
+    # sidebar after the *next* message. The history loop above redraws both
+    # messages, so nothing is lost by not rendering them inline here.
+    st.rerun()

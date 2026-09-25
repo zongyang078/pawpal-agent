@@ -6,8 +6,8 @@ so the Agent can discover and invoke them through function calling.
 """
 
 from datetime import date
-from pawpal_system import Task, Pet, Owner, Scheduler
 
+from pawpal_system import Owner, Pet, Scheduler, Task
 
 # --- Tool definitions (schema + implementation) ---
 
@@ -164,16 +164,27 @@ def execute_tool(
 # --- Tool implementations ---
 
 
+def _persist(owner: Owner) -> str:
+    """Save state, returning a suffix to append to the tool's result.
+
+    Persistence is best-effort: the in-memory change stands whether or not the
+    write lands, so a failure must not abort the tool. It must not be silent
+    either -- the caller would otherwise be told the pet was added and find it
+    gone next session.
+    """
+    try:
+        owner.save_to_json()
+    except OSError as e:
+        return f" (warning: could not save to {owner.data_path}: {e})"
+    return ""
+
+
 def _add_pet(owner: Owner, name: str, species: str) -> str:
     """Add a new pet to the owner."""
     if owner.find_pet(name) is not None:
         return f"A pet named '{name}' already exists."
     owner.add_pet(Pet(name=name, species=species))
-    try:
-        owner.save_to_json()
-    except Exception:
-        pass  # Persistence is best-effort; state still updated in memory
-    return f"Added {name} the {species}."
+    return f"Added {name} the {species}." + _persist(owner)
 
 
 def _add_task(
@@ -199,17 +210,14 @@ def _add_task(
         frequency=frequency,
     )
     pet.add_task(task)
-    try:
-        owner.save_to_json()
-    except Exception:
-        pass
+    saved = _persist(owner)
 
     # Proactively check for conflicts after adding
     conflicts = scheduler.detect_conflicts()
     result = f"Added task '{description}' for {pet_name} at {time}."
     if conflicts:
         result += f" Warning: {'; '.join(conflicts)}"
-    return result
+    return result + saved
 
 
 def _complete_task(
@@ -223,14 +231,11 @@ def _complete_task(
     for task in pet.tasks:
         if task.description.lower() == task_description.lower() and not task.completed:
             next_task = scheduler.mark_task_complete(task)
-            try:
-                owner.save_to_json()
-            except Exception:
-                pass
+            saved = _persist(owner)
             result = f"Completed '{task_description}' for {pet_name}."
             if next_task:
                 result += f" Next occurrence scheduled for {next_task.due_date}."
-            return result
+            return result + saved
 
     return f"No pending task '{task_description}' found for {pet_name}."
 

@@ -107,8 +107,7 @@ def print_intent(report: ClassificationReport, show_errors: bool) -> None:
 
 
 def print_retrieval(report: RetrievalReport, show_errors: bool) -> None:
-    total = len(report.misses) + round(report.recall_at_3 * (len(report.misses) or 1))
-    print(f"\nRETRIEVAL")
+    print("\nRETRIEVAL")
     print(f"  recall@1 {pct(report.recall_at_1)}   recall@3 {pct(report.recall_at_3)}"
           f"   MRR {report.mrr:.3f}")
     if show_errors and report.misses:
@@ -118,7 +117,7 @@ def print_retrieval(report: RetrievalReport, show_errors: bool) -> None:
 
 
 def print_guardrails(reports: dict[str, BinaryReport], show_errors: bool) -> None:
-    print(f"\nGUARDRAILS")
+    print("\nGUARDRAILS")
     print(f"  {'check':<12}{'recall':>8}{'prec':>8}{'FPR':>8}{'n':>5}")
     for name, r in reports.items():
         n = (r.true_positives + r.false_positives

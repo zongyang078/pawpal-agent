@@ -12,7 +12,6 @@ import json
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
-
 # --- Neutral protocol types ---
 
 

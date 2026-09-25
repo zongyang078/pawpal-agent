@@ -27,7 +27,7 @@ def classification_report(
     so a label the model never predicts shows up as a zero instead of vanishing.
     """
     labels = sorted({gold for _, gold, _ in items} | {pred for _, _, pred in items})
-    confusion = {g: {p: 0 for p in labels} for g in labels}
+    confusion = {g: dict.fromkeys(labels, 0) for g in labels}
     for _, gold, pred in items:
         confusion[gold][pred] += 1
 

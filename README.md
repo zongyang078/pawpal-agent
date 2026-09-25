@@ -1,5 +1,7 @@
 # PawPal+ Agent
 
+[![CI](https://github.com/zongyang078/pawpal-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/zongyang078/pawpal-agent/actions/workflows/ci.yml)
+
 A pet care scheduling assistant you talk to in plain language. It manages pets
 and recurring care tasks, spots scheduling conflicts, finds open time slots, and
 answers husbandry questions from a local knowledge base — with a deterministic
@@ -74,8 +76,11 @@ agent = PawPalAgent(owner=owner, llm_client=FakeClient([
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -e ".[dev]"      # drop [dev] to skip pytest/ruff/coverage
 ```
+
+This installs a `pawpal` command; the examples below use `python cli.py` so they
+work without installing.
 
 Optionally export `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` to enable LLM mode.
 
@@ -93,10 +98,12 @@ streamlit run app.py                  # chat UI
 ## Testing
 
 ```bash
-python -m pytest tests/ -q
+pytest                       # 185 tests
+ruff check .                 # lint
+coverage run -m pytest && coverage report
 ```
 
-182 tests across 9 modules, no network access required:
+185 tests across 9 modules, no network access required:
 
 | Module | Tests | Under test |
 |---|---|---|
@@ -106,7 +113,7 @@ python -m pytest tests/ -q
 | [`test_llm.py`](tests/test_llm.py) | 20 | Adapter translation both ways, error mapping, client construction |
 | [`test_guardrails.py`](tests/test_guardrails.py) | 17 | Toxic food, emergency, referral, confidence |
 | [`test_knowledge_base.py`](tests/test_knowledge_base.py) | 16 | Retrieval, ranking, IDF weighting, corpus loading |
-| [`test_tools.py`](tests/test_tools.py) | 14 | Tool schemas and dispatch |
+| [`test_tools.py`](tests/test_tools.py) | 17 | Tool schemas, dispatch, persistence failures |
 | [`test_cli.py`](tests/test_cli.py) | 11 | Every subcommand, exit codes, stream routing |
 | [`test_logger.py`](tests/test_logger.py) | 8 | Recording, summary, JSON export |
 
@@ -134,13 +141,13 @@ python -m evals.run --show-errors   # every failing case
 python -m evals.run --fail-under 0.9
 ```
 
-121 labelled cases, run offline against the rule-based path — no API key, no
+125 labelled cases, run offline against the rule-based path — no API key, no
 network, reproducible:
 
 | Suite | Metric | Score | n |
 |---|---|---|---|
 | Intent detection | accuracy | 68.0% | 50 |
-| Retrieval | recall@1 / recall@3 / MRR | 90.0% / 93.3% / 0.917 | 30 |
+| Retrieval | recall@1 / recall@3 / MRR | 91.2% / 94.1% / 0.926 | 34 |
 | Guardrail: emergency | recall / FPR | 100% / 0% | 18 |
 | Guardrail: vet referral | recall / FPR | 100% / 0% | 11 |
 | Guardrail: toxic food | recall / FPR | 100% / 0% | 12 |
@@ -160,6 +167,13 @@ and retrieval recall@1 was 56.7%. Three diagnoses followed:
   Species is already applied as a multiplier, so counting it in the term sum
   double-counted it. Excluding species terms took recall@1 from 56.7% to 90.0%
   and MRR from 0.661 to 0.917.
+
+Excluding species terms then opened a hole the dataset could not see: a query
+whose only content words are out-of-vocabulary ("is a plump hamster
+unhealthy?") started returning nothing, because every query in the set had at
+least one in-vocabulary content word. Found by using the app, not by the
+suite. Retrieval now falls back to the species the query named, and the four
+cases that exposed it are in the dataset.
 
 **Read the guardrail scores with suspicion.** They were tuned against these
 same 41 cases, so 100% is a statement about this set, not about English. The
@@ -272,10 +286,11 @@ pawpal-agent/
 ├── app.py                # Streamlit chat UI
 ├── knowledge/            # 14 care documents (.txt)
 ├── evals/                # labelled datasets, metrics, harness
-├── tests/                # 182 tests across 9 modules
+├── tests/                # 185 tests across 9 modules
 ├── assets/               # architecture diagram, screenshots
 ├── model_card.md         # intended use, limitations, safety gaps
-└── requirements.txt
+├── pyproject.toml        # deps, ruff, pytest, coverage config
+└── .github/workflows/    # CI: lint, tests, coverage floor, evals
 ```
 
 ## Origins

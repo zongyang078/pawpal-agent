@@ -341,22 +341,36 @@ class KnowledgeBase:
 
         return score
 
+    def _score_all(self, tokens: list[str]) -> list[tuple[float, Document]]:
+        scored = [
+            (score, doc)
+            for doc in self.documents
+            if (score := self._tf_idf_score(tokens, doc)) > 0
+        ]
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return scored
+
     def rank(self, query: str, top_k: int = 3) -> list[tuple[float, Document]]:
         """Return the top_k documents for a query, highest score first.
 
         Separate from search() so retrieval quality can be measured -- search()
         returns prose, which you cannot compute recall@k against.
+
+        If the discriminating terms match nothing, fall back to the species the
+        query named. "Is a plump hamster unhealthy?" has no in-vocabulary
+        content word -- neither "plump" nor "unhealthy" appears in the corpus --
+        but the hamster article is still a better answer than nothing.
         """
         query_tokens = self._tokenize(query)
         if not query_tokens:
             return []
 
-        scored = [
-            (score, doc)
-            for doc in self.documents
-            if (score := self._tf_idf_score(query_tokens, doc)) > 0
-        ]
-        scored.sort(key=lambda x: x[0], reverse=True)
+        scored = self._score_all(query_tokens)
+        if not scored:
+            species_tokens = [t for t in query_tokens if t in self.SPECIES_TERMS]
+            if species_tokens:
+                scored = self._score_all(species_tokens)
+
         return scored[:top_k]
 
     def search(self, query: str, top_k: int = 3) -> str:
@@ -381,7 +395,7 @@ class KnowledgeBase:
             )
 
         lines = ["Here is what I found in the pet care knowledge base:", ""]
-        for score, doc in top_results:
+        for _score, doc in top_results:
             lines.append(f"  [{doc.category.upper()}] {doc.title}")
             lines.append(f"  {doc.content}")
             lines.append("")
@@ -417,7 +431,7 @@ class KnowledgeBase:
                 continue
             filepath = os.path.join(directory, filename)
             try:
-                with open(filepath, "r") as f:
+                with open(filepath) as f:
                     lines = f.readlines()
                 if len(lines) < 4:
                     continue

@@ -8,7 +8,6 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Optional
 
-
 # Priority ranking for sorting (higher number = higher priority)
 PRIORITY_ORDER = {"high": 3, "medium": 2, "low": 1}
 
@@ -139,7 +138,7 @@ class Owner:
         """Add a pet to this owner's collection."""
         self.pets.append(pet)
 
-    def find_pet(self, name: str) -> Optional[Pet]:
+    def find_pet(self, name: str) -> Pet | None:
         """Find a pet by name (case-insensitive). Returns None if not found."""
         for pet in self.pets:
             if pet.name.lower() == name.lower():
@@ -176,7 +175,7 @@ class Owner:
     def load_from_json(cls, filepath: str = "data.json") -> Optional["Owner"]:
         """Load an owner from a JSON file. Returns None if file not found."""
         try:
-            with open(filepath, "r", encoding="utf-8") as f:
+            with open(filepath, encoding="utf-8") as f:
                 data = json.load(f)
         except FileNotFoundError:
             return None
@@ -231,7 +230,7 @@ class Scheduler:
                 warnings.append(f"Conflict at {time_slot}: {names}")
         return warnings
 
-    def mark_task_complete(self, task: Task) -> Optional[Task]:
+    def mark_task_complete(self, task: Task) -> Task | None:
         """Complete a task and auto-create its next occurrence if recurring."""
         task.mark_complete()
         next_task = task.create_next_occurrence()
@@ -256,7 +255,7 @@ class Scheduler:
             key=lambda t: (-PRIORITY_ORDER.get(t.priority, 0), t.time),
         )
 
-    def find_next_available_slot(self, duration_minutes: int) -> Optional[str]:
+    def find_next_available_slot(self, duration_minutes: int) -> str | None:
         """Find the next available time slot that fits the given duration.
 
         Scans from 07:00 to 21:00 in 30-minute increments, using minute-based

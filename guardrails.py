@@ -8,7 +8,6 @@ Includes toxic food detection, confidence scoring, and medical disclaimer inject
 import re
 from dataclasses import dataclass
 
-
 # --- Toxic substances by species ---
 
 TOXIC_FOODS: dict[str, list[str]] = {
