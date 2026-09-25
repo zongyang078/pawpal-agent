@@ -226,20 +226,33 @@ def check_vet_referral(user_message: str) -> GuardrailResult:
     return GuardrailResult(passed=True, warnings=[])
 
 
-def compute_confidence(tool_results: list[str], user_query: str) -> float:
+# Where a turn starts before the tool results adjust it.
+TOOL_BASELINE_CONFIDENCE = 0.5
+# A model that answers a greeting in text has done the right thing, so this is
+# ordinary rather than weak.
+LLM_TEXT_ONLY_CONFIDENCE = 0.6
+# The rule-based path reaching its generic reply means nothing matched.
+FALLBACK_CONFIDENCE = 0.3
+
+
+def compute_confidence(tool_results: list[str], *, llm_answered: bool = False) -> float:
     """Estimate confidence in the Agent's response based on tool results.
 
     Heuristic scoring:
     - Higher if tool results contain substantive content
     - Lower if tools returned errors or 'not found' messages
-    - Lower if the query seems complex but few tools were called
+
+    A turn with no tool calls is not automatically a weak one, and treating it
+    that way put a "Low confidence" warning under perfectly good answers: the
+    model choosing to reply in text is normal, while the rule-based path
+    falling through to its generic reply is the case actually worth flagging.
 
     Returns a float between 0.0 and 1.0.
     """
     if not tool_results:
-        return 0.3  # No tools called = low confidence
+        return LLM_TEXT_ONLY_CONFIDENCE if llm_answered else FALLBACK_CONFIDENCE
 
-    score = 0.5  # Base score
+    score = TOOL_BASELINE_CONFIDENCE
 
     for result in tool_results:
         result_lower = result.lower()
@@ -269,6 +282,7 @@ def run_all_checks(
     agent_response: str,
     tool_results: list[str],
     pet_species: str | None = None,
+    confidence: float | None = None,
 ) -> GuardrailResult:
     """Run all guardrail checks and return a combined result.
 
@@ -296,7 +310,10 @@ def run_all_checks(
     all_warnings.extend(toxic_check.warnings)
 
     # 4. Confidence scoring
-    confidence = compute_confidence(tool_results, user_message)
+    # The caller knows whether the model answered or the rule-based path did,
+    # so it computes this; recomputing here would lose that and disagree.
+    if confidence is None:
+        confidence = compute_confidence(tool_results)
 
     # Build final result
     modified = None

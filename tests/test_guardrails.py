@@ -68,24 +68,35 @@ class TestVetReferral:
 class TestConfidence:
     """Tests for the heuristic confidence score."""
 
-    def test_no_tools_scores_low(self):
-        assert compute_confidence([], "hello") == 0.3
+    def test_rule_based_fallback_scores_low(self):
+        """Nothing matched, so the generic reply really is weak."""
+        assert compute_confidence([]) == 0.3
+
+    def test_an_llm_answering_in_text_is_not_low_confidence(self):
+        """A model replying to a greeting without tools has done the right
+        thing. Scoring that 0.3 put a "Low confidence" warning under good
+        answers, which is worse than saying nothing."""
+        assert compute_confidence([], llm_answered=True) > 0.5
 
     def test_successful_tools_score_above_baseline(self):
         score = compute_confidence(
-            ["Added Mochi the dog.", "Today's schedule (2026-04-13):"],
-            "add a pet and show schedule",
+            ["Added Mochi the dog.", "Today's schedule (2026-04-13):"]
         )
         assert score > 0.5
 
     def test_error_results_score_below_baseline(self):
-        assert compute_confidence(["Error: something went wrong"], "add a pet") < 0.5
+        assert compute_confidence(["Error: something went wrong"]) < 0.5
+
+    def test_tool_results_outweigh_how_the_answer_was_produced(self):
+        """Once tools ran, their outcome decides; llm_answered is irrelevant."""
+        errors = ["Error: something went wrong"]
+        assert compute_confidence(errors) == compute_confidence(errors, llm_answered=True)
 
     def test_score_is_clamped_to_unit_interval(self):
         many_good = ["Added a task. " * 20] * 10
         many_bad = ["Error: not found"] * 10
-        assert 0.0 <= compute_confidence(many_good, "q") <= 1.0
-        assert 0.0 <= compute_confidence(many_bad, "q") <= 1.0
+        assert 0.0 <= compute_confidence(many_good) <= 1.0
+        assert 0.0 <= compute_confidence(many_bad) <= 1.0
 
 
 class TestRunAllChecks:
